@@ -194,13 +194,14 @@
   accept=".srt,.txt"
   hidden
   onchange={async (e) => {
-    const f = e.currentTarget.files?.[0];
+    const inp = e.currentTarget;
+    const f = inp.files?.[0];
     if (!f) return;
     studio.subs = studio.parseSRT(await f.text());
     studio.inv();
     studio.snap();
     subTab = 'edit';
-    e.currentTarget.value = '';
+    inp.value = '';
   }}
 />
 

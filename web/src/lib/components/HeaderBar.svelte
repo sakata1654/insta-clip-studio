@@ -1,14 +1,15 @@
 <script>
   import { pickAndOpenVideo } from '../mediaHelpers.js';
-  import { exportAll, saveBlob } from '../renderer.js';
+  import { exportAll, saveBlob, shareBlob } from '../renderer.js';
   import { studio } from '../state.svelte.js';
+  import { viewport } from '../webPlatform/viewport.svelte.js';
   import Icon from './Icon.svelte';
 
   let { onOpenProjects = () => {}, onOpenSettings = () => {} } = $props();
   let jobsOpen = $state(false);
+  let mobileMenuOpen = $state(false);
   const runningJobs = $derived(studio.exportJobs.filter((j) => !j.done));
   const latestJob = $derived(runningJobs[0] || studio.exportJobs[0] || null);
-
   const missingReq = $derived(studio.mediaStatus === 'missing' ? 1 : 0);
 
   function saveToLibrary() {
@@ -40,69 +41,105 @@
   }
 </script>
 
-<header class="top-bar">
+<header class="top-bar" class:compact={viewport.isCompact}>
   <div class="bar-left">
     <button
       type="button"
       class="sm ghost"
       onclick={() => (studio.homeOpen = true)}
       title="Back to Project Homepage"
+      aria-label="Home"
     >
       <Icon name="home" size={14} />
-      <span>Home</span>
+      {#if !viewport.isMobile}<span>Home</span>{/if}
     </button>
 
-    <div class="brand">
-      <div class="logo-mark">
-        <Icon name="film" size={13} />
+    {#if !viewport.isMobile}
+      <div class="brand">
+        <div class="logo-mark">
+          <Icon name="film" size={13} />
+        </div>
+        <span class="app-title">InstaClip Studio</span>
+        <span class="env-pill">Web</span>
       </div>
-      <span class="app-title">InstaClip Studio</span>
-      <span class="env-pill">Web</span>
-    </div>
-
-    <span class="v-div"></span>
+      <span class="v-div"></span>
+    {/if}
 
     {#if studio.mediaStatus === 'missing' || studio.mediaStatus === 'permission-needed'}
       <button type="button" class="sm pri" onclick={() => pickAndOpenVideo()} title="Relink missing local video file for this project">
         <Icon name="upload" size={12} />
-        <span>Relink Video</span>
+        <span>Relink</span>
       </button>
     {/if}
 
     <input
       class="proj-pill"
       bind:value={studio.projectName}
-      placeholder="Untitled Project"
+      placeholder="Untitled"
       aria-label="Project name"
     />
-    <span class="save-state" class:unsaved={studio.unsaved} title={studio.unsaved ? 'Unsaved changes (Ctrl+S)' : 'Saved to library'}>
-      <i class="sdot"></i>
-      <span>{studio.unsaved ? 'Unsaved' : 'Saved'}</span>
-    </span>
-    <button type="button" class="sm ghost" onclick={onOpenProjects} title="Browse & Manage Projects">
-      <Icon name="folder" size={14} />
-      <span>Projects</span>
-    </button>
+
+    {#if !viewport.isMobile}
+      <span class="save-state" class:unsaved={studio.unsaved} title={studio.unsaved ? 'Unsaved changes (Ctrl+S)' : 'Saved to library'}>
+        <i class="sdot"></i>
+        <span>{studio.unsaved ? 'Unsaved' : 'Saved'}</span>
+      </span>
+      <button type="button" class="sm ghost" onclick={onOpenProjects} title="Browse & Manage Projects">
+        <Icon name="folder" size={14} />
+        <span>Projects</span>
+      </button>
+    {/if}
   </div>
 
-  <div class="bar-center">
-    <div class="mode-toggle" role="tablist" aria-label="Workspace view">
-      <button type="button" class:on={studio.nav !== 'tr' && studio.nav !== 'ai'} onclick={() => (studio.nav = 'ed')}>
-        <Icon name="sliders" size={12} />
-        <span>Timeline Editor</span>
-      </button>
-      <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
-        <Icon name="languages" size={12} />
-        <span>Translation Desk</span>
-      </button>
-      <button type="button" class:on={studio.nav === 'ai'} onclick={() => (studio.nav = 'ai')}>
-        <Icon name="sparkles" size={12} />
-        <span>AI Clips</span>
-      </button>
+  {#if !viewport.isMobile}
+    <div class="bar-center">
+      <div class="mode-toggle" role="tablist" aria-label="Workspace view">
+        <button type="button" class:on={studio.nav !== 'tr' && studio.nav !== 'ai'} onclick={() => (studio.nav = 'ed')}>
+          <Icon name="sliders" size={12} />
+          <span>{viewport.isTablet ? 'Editor' : 'Timeline Editor'}</span>
+        </button>
+        <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
+          <Icon name="languages" size={12} />
+          <span>{viewport.isTablet ? 'Translate' : 'Translation Desk'}</span>
+        </button>
+        <button type="button" class:on={studio.nav === 'ai'} onclick={() => (studio.nav = 'ai')}>
+          <Icon name="sparkles" size={12} />
+          <span>AI Clips</span>
+        </button>
+      </div>
     </div>
-  </div>
+  {/if}
 
   <div class="bar-right">
+    {#if viewport.isTablet && studio.nav === 'ed'}
+      <button
+        type="button"
+        class="sm"
+        class:pri={studio.tabletToolsOpen}
+        onclick={() => {
+          studio.tabletToolsOpen = !studio.tabletToolsOpen;
+          if (viewport.tier === 'tablet-portrait' && studio.tabletToolsOpen) studio.tabletInspectorOpen = false;
+        }}
+        title="Toggle editing tools panel"
+      >
+        <Icon name="layers" size={13} />
+        <span>Tools</span>
+      </button>
+      <button
+        type="button"
+        class="sm"
+        class:pri={studio.tabletInspectorOpen}
+        onclick={() => {
+          studio.tabletInspectorOpen = !studio.tabletInspectorOpen;
+          if (viewport.tier === 'tablet-portrait' && studio.tabletInspectorOpen) studio.tabletToolsOpen = false;
+        }}
+        title="Toggle properties inspector"
+      >
+        <Icon name="sliders" size={13} />
+        <span>Inspect</span>
+      </button>
+    {/if}
+
     <button
       type="button"
       class="sm ghost icon-btn"
@@ -124,39 +161,42 @@
       <Icon name="redo" size={14} />
     </button>
 
-    <span class="v-div"></span>
+    {#if !viewport.isMobile}
+      <span class="v-div"></span>
+      <button
+        type="button"
+        class="sm ghost icon-btn"
+        onclick={() => studio.applyUiTheme(studio.uiTheme === 'light' ? 'dark' : 'light')}
+        title={studio.uiTheme === 'light' ? 'Switch to Dark Graphite theme' : 'Switch to Clean Light theme'}
+        aria-label="Toggle color theme"
+      >
+        <Icon name={studio.uiTheme === 'light' ? 'moon' : 'sun'} size={14} />
+      </button>
 
-    <button
-      type="button"
-      class="sm ghost icon-btn"
-      onclick={() => studio.applyUiTheme(studio.uiTheme === 'light' ? 'dark' : 'light')}
-      title={studio.uiTheme === 'light' ? 'Switch to Dark Graphite theme' : 'Switch to Clean Light theme'}
-      aria-label="Toggle color theme"
-    >
-      <Icon name={studio.uiTheme === 'light' ? 'moon' : 'sun'} size={14} />
-    </button>
+      <button
+        type="button"
+        class="sm ghost icon-btn"
+        onclick={onOpenSettings}
+        title="Settings, AI Keys & Shortcuts"
+        aria-label="Studio Settings"
+      >
+        <Icon name="settings" size={14} />
+        <span class="status-dot" style="background:{missingReq ? 'var(--accent-amber)' : 'var(--accent-green)'}"></span>
+      </button>
 
-    <button
-      type="button"
-      class="sm ghost icon-btn"
-      onclick={onOpenSettings}
-      title="Settings, AI Keys & Shortcuts"
-      aria-label="Studio Settings"
-    >
-      <Icon name="settings" size={14} />
-      <span class="status-dot" style="background:{missingReq ? 'var(--accent-amber)' : 'var(--accent-green)'}"></span>
-    </button>
+      <span class="v-div"></span>
 
-    <span class="v-div"></span>
+      <button type="button" class="sm" onclick={saveToLibrary} title="Save Project (Ctrl+S)">
+        <Icon name="save" size={13} />
+        <span>Save</span>
+      </button>
 
-    <button type="button" class="sm" onclick={saveToLibrary} title="Save Project (Ctrl+S)">
-      <Icon name="save" size={13} />
-      <span>Save</span>
-    </button>
-
-    <button type="button" class="sm ghost" onclick={exportProjectJson} title="Export portable .icproj.json">
-      <span>.JSON</span>
-    </button>
+      {#if !viewport.isTablet}
+        <button type="button" class="sm ghost" onclick={exportProjectJson} title="Export portable .icproj.json">
+          <span>.JSON</span>
+        </button>
+      {/if}
+    {/if}
 
     {#if studio.exportJobs.length}
       <div class="jobs-wrap">
@@ -169,10 +209,10 @@
         >
           {#if runningJobs.length}
             <span class="pulse-dot"></span>
-            <span>Rendering {latestJob?.pct ?? 0}%</span>
+            <span>{latestJob?.pct ?? 0}%</span>
           {:else}
             <Icon name="check" size={12} />
-            <span>Exports ({studio.exportJobs.length})</span>
+            <span>{studio.exportJobs.length}</span>
           {/if}
         </button>
 
@@ -198,7 +238,12 @@
                   {#if !j.done && j.cancel}
                     <button type="button" class="xs danger" onclick={() => j.cancel()}>Cancel</button>
                   {:else if j.done && !j.error && j.downloadUrl}
-                    <a class="btn xs pri" href={j.downloadUrl} download={j.filename || 'export.mp4'}>Download</a>
+                    <div class="rt" style="gap:4px">
+                      {#if j.shareable && j.blob}
+                        <button type="button" class="xs" onclick={() => shareBlob(j.blob, j.filename || 'export.mp4')}>Share</button>
+                      {/if}
+                      <a class="btn xs pri" href={j.downloadUrl} download={j.filename || 'export.mp4'}>Save</a>
+                    </div>
                   {/if}
                 </div>
               </div>
@@ -208,9 +253,51 @@
       </div>
     {/if}
 
+    {#if viewport.isMobile}
+      <div class="jobs-wrap">
+        <button
+          type="button"
+          class="sm ghost icon-btn"
+          onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
+          aria-label="Workspace menu"
+        >
+          <Icon name="menu" size={15} />
+        </button>
+        {#if mobileMenuOpen}
+          <div class="jobs-popover mobile-menu" role="menu">
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { studio.nav = 'ed'; mobileMenuOpen = false; }}>
+              <Icon name="sliders" size={14} /> Timeline Editor
+            </button>
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { studio.nav = 'tr'; mobileMenuOpen = false; }}>
+              <Icon name="languages" size={14} /> Translation Desk
+            </button>
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { studio.nav = 'ai'; mobileMenuOpen = false; }}>
+              <Icon name="sparkles" size={14} /> AI Smart Clips
+            </button>
+            <hr style="border:0;border-top:1px solid var(--border-color);width:100%;margin:4px 0" />
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { saveToLibrary(); mobileMenuOpen = false; }}>
+              <Icon name="save" size={14} /> Save Project
+            </button>
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { exportProjectJson(); mobileMenuOpen = false; }}>
+              <Icon name="download" size={14} /> Export .JSON
+            </button>
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { onOpenProjects(); mobileMenuOpen = false; }}>
+              <Icon name="folder" size={14} /> Projects Library
+            </button>
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { studio.applyUiTheme(studio.uiTheme === 'light' ? 'dark' : 'light'); mobileMenuOpen = false; }}>
+              <Icon name={studio.uiTheme === 'light' ? 'moon' : 'sun'} size={14} /> Theme: {studio.uiTheme === 'light' ? 'Dark' : 'Light'}
+            </button>
+            <button type="button" class="sm" style="width:100%;justify-content:flex-start" onclick={() => { onOpenSettings(); mobileMenuOpen = false; }}>
+              <Icon name="settings" size={14} /> Settings &amp; Capabilities
+            </button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <button type="button" class="sm pri" onclick={() => exportAll()} title="Start background MP4 export">
       <Icon name="upload" size={13} />
-      <span>Export MP4</span>
+      <span>{viewport.isMobile ? 'Export' : 'Export MP4'}</span>
     </button>
   </div>
 </header>
@@ -218,16 +305,20 @@
 <style>
   .top-bar {
     grid-area: h;
-    height: 46px;
+    height: calc(46px + var(--sat));
+    padding: var(--sat) calc(12px + var(--sar)) 0 calc(12px + var(--sal));
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    padding: 0 12px;
+    gap: 8px;
     background: var(--bg-titlebar);
     border-bottom: 1px solid var(--border-color);
-    z-index: 20;
+    z-index: 30;
     min-width: 0;
+  }
+  .top-bar.compact {
+    padding: var(--sat) calc(8px + var(--sar)) 0 calc(8px + var(--sal));
+    gap: 4px;
   }
 
   .bar-left,
@@ -285,10 +376,17 @@
     background: transparent;
     border-color: transparent;
     padding: 4px 8px;
-    width: 150px;
+    width: 145px;
+    min-width: 72px;
     font-size: 12.2px;
     font-weight: 600;
     border-radius: var(--radius-sm);
+  }
+  .top-bar.compact .proj-pill {
+    width: auto;
+    max-width: 120px;
+    flex: 1;
+    padding: 4px 6px;
   }
   .proj-pill:hover,
   .proj-pill:focus {
@@ -319,7 +417,7 @@
 
   .mode-toggle {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, auto);
     gap: 2px;
     background: var(--bg-input);
     padding: 2px;
@@ -329,7 +427,7 @@
   .mode-toggle button {
     border: 0;
     background: transparent;
-    padding: 4px 11px;
+    padding: 4px 10px;
     border-radius: var(--radius-sm);
     color: var(--text-thirdly);
     font-size: 11.5px;
@@ -383,7 +481,7 @@
     position: absolute;
     right: 0;
     top: calc(100% + 8px);
-    width: 310px;
+    width: min(310px, calc(100vw - 24px));
     max-height: 380px;
     overflow-y: auto;
     background: var(--bg-secondary);
@@ -393,12 +491,19 @@
     box-shadow: var(--shadow-lg);
     z-index: 60;
   }
+  .mobile-menu {
+    width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+  }
 
-  @media (max-width: 1080px) {
+  @media (max-width: 1180px) {
     .proj-pill {
-      width: 110px;
+      width: 104px;
     }
-    .env-pill {
+    .save-state {
       display: none;
     }
   }

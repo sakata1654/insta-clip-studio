@@ -20,11 +20,10 @@
     split: 'Split Subtitle at Playhead',
     undo: 'Undo',
     redo: 'Redo',
-    previous: 'Step Backward',
-    next: 'Step Forward',
-    setStart: 'Set Range Start [In]',
-    setEnd: 'Set Range End [Out]',
+    delete: 'Delete Selected Subtitle',
     save: 'Save Project',
+    previous: 'Previous Frame',
+    next: 'Next Frame',
   };
 
   const visibleProjects = $derived.by(() => {

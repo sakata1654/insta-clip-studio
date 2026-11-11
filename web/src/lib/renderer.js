@@ -1,6 +1,7 @@
 import { recordTrimAdjustment } from './aiClipTrainer.js';
 import { AMIRI } from './constants.js';
 import { cl, fts, hex2, rgb2hex, rgba, studio } from './state.svelte.js';
+import { canShareMediaFile } from './webPlatform/viewport.svelte.js';
 import { exportWithWebCodecs, getBrowserCapabilities, scaleDimensionsForExport } from './webPlatform/webExportEngine.js';
 
 const TH_DEF = { bg: '#140f87', accent: '#ffd700', banner: '#0f0a64' };
@@ -2008,8 +2009,10 @@ export async function exportAll(exportOptions = {}) {
         }
         setJob(100, 'MP4 Export complete', {
           done: true,
+          blob: mp4Blob,
           downloadUrl: dlUrl,
           filename: outFilename,
+          shareable: canShareMediaFile(mp4Blob, outFilename),
           status: `Ready (${(mp4Blob.size / (1024 * 1024)).toFixed(1)} MB MP4)`,
         });
         studio.toast('Background MP4 export finished: ' + outFilename);
@@ -2100,20 +2103,25 @@ export async function exportAll(exportOptions = {}) {
     await saveBlob(outBlob, outFilename);
     setJob(100, 'Export complete', {
       done: true,
+      blob: outBlob,
       downloadUrl: dlUrl,
       filename: outFilename,
+      shareable: canShareMediaFile(outBlob, outFilename),
       status: 'Downloaded: ' + outFilename,
     });
     studio.toast('Background export finished: ' + outFilename);
   } catch (e) {
-    const msg = String(e?.message || e);
-    const isCancel = msg === 'Export cancelled';
+    const rawMsg = String(e?.message || e);
+    const isCancel = rawMsg === 'Export cancelled';
+    const hintMsg = /memory|allocation|oom/i.test(rawMsg)
+      ? `${rawMsg} (Tip: lower Output Resolution to 720p or close background tabs on mobile.)`
+      : rawMsg;
     setJob(0, isCancel ? 'Cancelled' : 'Export failed', {
       done: true,
       error: !isCancel,
-      status: isCancel ? 'Cancelled by user' : 'Error: ' + msg,
+      status: isCancel ? 'Cancelled by user' : 'Error: ' + hintMsg,
     });
-    if (!isCancel) studio.toast('Background export failed: ' + msg);
+    if (!isCancel) studio.toast('Background export failed: ' + hintMsg);
   } finally {
     cancelAnimationFrame(rafId);
     if (cs) try { cs.getTracks().forEach((t) => t.stop()); } catch {}
@@ -2159,6 +2167,21 @@ export async function saveBlob(blob, filename) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+export async function shareBlob(blob, filename = 'export.mp4') {
+  if (!blob) return false;
+  try {
+    const f = new File([blob], filename, { type: blob.type || 'video/mp4' });
+    if (navigator?.share && (!navigator.canShare || navigator.canShare({ files: [f] }))) {
+      await navigator.share({ files: [f], title: filename });
+      return true;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return false;
+  }
+  await saveBlob(blob, filename);
+  return true;
 }
 
 export async function ensureSourcePath() {

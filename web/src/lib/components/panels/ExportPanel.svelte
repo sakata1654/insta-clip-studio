@@ -1,5 +1,5 @@
 <script>
-  import { exportAll, makeThumb, saveBlob } from '../../renderer.js';
+  import { exportAll, makeThumb, saveBlob, shareBlob } from '../../renderer.js';
   import { fmt, studio } from '../../state.svelte.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import StyleFieldRow from '../StyleFieldRow.svelte';
@@ -144,7 +144,12 @@
             {#if !j.done && j.cancel}
               <button type="button" class="xs danger" onclick={() => j.cancel()}>Cancel</button>
             {:else if j.done && !j.error && j.downloadUrl}
-              <a class="btn xs pri" href={j.downloadUrl} download={j.filename || 'export.mp4'}>Download</a>
+              <div class="rt" style="gap:4px">
+                {#if j.shareable && j.blob}
+                  <button type="button" class="xs" onclick={() => shareBlob(j.blob, j.filename || 'export.mp4')}>Share</button>
+                {/if}
+                <a class="btn xs pri" href={j.downloadUrl} download={j.filename || 'export.mp4'}>Download</a>
+              </div>
             {/if}
           </div>
         </div>

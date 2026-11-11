@@ -1,0 +1,23 @@
+{
+  "name": "InstaClip Studio",
+  "short_name": "InstaClip",
+  "description": "Mobile & desktop browser video editor with dual subtitles, speaker banners, and WebCodecs MP4 export.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111216",
+  "theme_color": "#17191f",
+  "icons": [
+    {
+      "src": "/app-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/app-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

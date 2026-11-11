@@ -1,5 +1,7 @@
 <script>
   import {
+    APPROVE_TAGS,
+    CONTENT_CATEGORIES,
     REJECT_REASONS,
     findSmartClips,
     getTrainerSummary,
@@ -22,7 +24,8 @@
   let dlBusy = $state(false);
   let dlStatus = $state('');
 
-  // AI clips & self-training state
+  // AI clips & Editorial Intelligence state
+  let aiCategory = $state('auto');
   let aiCount = $state(6);
   let aiMax = $state(120);
   let aiFocus = $state('');
@@ -30,6 +33,7 @@
   let aiStatus = $state('');
   let aiClips = $state([]);
   let rejectMenuId = $state(null);
+  let approveMenuId = $state(null);
   let trainer = $state(getTrainerSummary(loadTrainerProfile()));
 
   function refreshTrainer() {
@@ -71,19 +75,22 @@
     aiBusy = true;
     aiClips = [];
     rejectMenuId = null;
+    approveMenuId = null;
     try {
       const res = await findSmartClips({
         subs: studio.subs,
         totalDur: studio.dur || 0,
         apiCfg: studio.API,
         count: aiCount,
+        minSec: 45,
         maxSec: aiMax,
+        category: aiCategory,
         extraPrompt: aiFocus.trim(),
         onProgress: (m) => (aiStatus = m),
       });
       aiClips = res.clips || [];
       refreshTrainer();
-      aiStatus = `Found ${aiClips.length} boundary-snapped clips (${trainer.ruleCount} learned rules applied).`;
+      aiStatus = `Found ${aiClips.length} standalone reels (${(res.detected_category || 'lecture').replace(/_/g, ' ')}).`;
     } catch (e) {
       aiStatus = 'Error: ' + (e?.message || e);
     } finally {
@@ -96,15 +103,28 @@
     studio.trimE = +c.end_seconds;
     studio.activeAiClip = { ...c };
     studio.seek(+c.start_seconds);
-    studio.toast('Clip loaded — manual trims or exports teach the AI!');
+    recordClipFeedback(c, 'preview_open', { category: c.category });
+    refreshTrainer();
+    studio.toast('Clip loaded — manual trims or exports teach Editorial Intelligence!');
   }
 
-  function markClipFeedback(c, action, reason = '') {
-    recordClipFeedback(c, action, { reason });
-    c.feedback = action;
-    rejectMenuId = null;
+  function markClipFeedback(c, action, reasonOrTag = '') {
+    if (action === 'approve') {
+      recordClipFeedback(c, 'approve', {
+        category: c.category,
+        positiveTags: reasonOrTag ? [reasonOrTag] : [],
+      });
+      c.feedback = 'approve';
+      approveMenuId = c.id;
+      rejectMenuId = null;
+    } else {
+      recordClipFeedback(c, 'reject', { reason: reasonOrTag, category: c.category });
+      c.feedback = 'reject';
+      rejectMenuId = null;
+      approveMenuId = null;
+    }
     refreshTrainer();
-    studio.toast(action === 'approve' ? 'Approved! AI learned from this clip.' : 'Feedback saved — AI will avoid this pattern.');
+    studio.toast(action === 'approve' ? 'Approved! Editorial Intelligence updated.' : 'Rejection logged — AI will adapt.');
   }
 
   function saveCurrentTrimAsExample() {
@@ -208,15 +228,15 @@
 {:else if subTab === 'assets'}
   <AssetsPanel />
 {:else}
-  <CategoryBlock title="AI Clip Finder & Self-Trainer" icon="sparkles" open={true}>
+  <CategoryBlock title="AI Lecture-to-Reels & Editorial Memory" icon="sparkles" open={true}>
     <div class="sub-card" style="margin-bottom:8px">
       <div class="rt" style="justify-content:space-between;margin-bottom:4px">
-        <span style="font-weight:700;font-size:11px">AI Coach Memory</span>
-        <span class="badge mono">{trainer.daysTrained || 0}d · {trainer.ruleCount} rules</span>
+        <span style="font-weight:700;font-size:11px">Editorial Intelligence</span>
+        <span class="badge mono">v{trainer.profileVersion} · {trainer.reviewed} reviewed</span>
       </div>
       <div class="hint" style="margin-bottom:6px">
-        Sweet spot ~{trainer.preferredDurSec}s
-        {#if trainer.approvalRate !== null} · {trainer.approvalRate}% kept{/if}
+        Target ~{trainer.preferredDurSec}s
+        {#if trainer.acceptanceRate !== null} · {trainer.acceptanceRate}% accepted{/if}
         {#if trainer.pendingSignals > 0} · {trainer.pendingSignals} new signals{/if}
       </div>
       <div class="bar" style="gap:4px">
@@ -226,18 +246,26 @@
         <button
           type="button"
           class="xs pri"
-          disabled={aiBusy || trainer.approved + trainer.rejected + trainer.exported + trainer.trimCorrected === 0}
+          disabled={aiBusy || trainer.exampleCount === 0}
           onclick={trainAiCoachNow}
-          title="Distill your approvals, rejections, and trim adjustments into updated rules"
+          title="Reflect accumulated feedback into updated editorial rules"
         >
-          Train Now
+          Reflect ({trainer.pendingSignals})
         </button>
       </div>
     </div>
 
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--t2);margin-bottom:6px">
+      Content Category
+      <select bind:value={aiCategory}>
+        {#each CONTENT_CATEGORIES as cat}
+          <option value={cat.id}>{cat.label}</option>
+        {/each}
+      </select>
+    </label>
     <div class="sg">
-      <label>Max clips<input type="number" min="1" max="25" bind:value={aiCount} /></label>
-      <label>Max sec<input type="number" min="15" max="300" bind:value={aiMax} /></label>
+      <label>Max reels<input type="number" min="1" max="20" bind:value={aiCount} /></label>
+      <label>Max sec<input type="number" min="30" max="300" bind:value={aiMax} /></label>
     </div>
     <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--t2);margin-top:6px">
       Topic / Hook Focus (optional)
@@ -248,7 +276,7 @@
         <Icon name="sparkles" size={13} />
         {aiBusy ? 'Analyzing…' : 'Find Smart Clips'}
       </button>
-      <button type="button" class="sm" onclick={() => (studio.nav = 'ai')} title="Open full AI Clips & Trainer Manager">Studio</button>
+      <button type="button" class="sm" onclick={() => { studio.mobileSheet = null; studio.nav = 'ai'; }} title="Open full Editorial Intelligence & Reels Studio">Studio</button>
       <button type="button" class="sm" onclick={() => (studio.apiModalOpen = true)}>API</button>
     </div>
     {#if aiStatus}
@@ -293,6 +321,15 @@
             <Icon name="x" size={12} />
           </button>
         </div>
+        {#if approveMenuId === c.id}
+          <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
+            {#each APPROVE_TAGS.slice(0, 6) as tag}
+              <button type="button" class="xs" onclick={() => markClipFeedback(c, 'approve', tag.id)}>
+                +{tag.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
         {#if rejectMenuId === c.id}
           <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
             {#each REJECT_REASONS as rr}

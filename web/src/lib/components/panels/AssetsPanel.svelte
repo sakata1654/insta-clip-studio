@@ -112,9 +112,54 @@
   }
 </script>
 
-<input bind:this={imgIn} type="file" accept="image/*" hidden onchange={(e) => e.currentTarget.files?.[0] && addAssetFile(e.currentTarget.files[0], 'image')} />
-<input bind:this={vidIn} type="file" accept="video/*" hidden onchange={(e) => e.currentTarget.files?.[0] && addAssetFile(e.currentTarget.files[0], 'video')} />
-<input bind:this={audIn} type="file" accept="audio/*" hidden onchange={(e) => e.currentTarget.files?.[0] && addAssetFile(e.currentTarget.files[0], 'audio')} />
+<input
+  bind:this={imgIn}
+  type="file"
+  accept="image/*"
+  multiple
+  hidden
+  onchange={async (e) => {
+    const files = [...(e.currentTarget.files || [])];
+    e.currentTarget.value = '';
+    for (let i = 0; i < files.length; i++) {
+      status = files.length > 1 ? `Importing image ${i + 1}/${files.length}…` : '';
+      await addAssetFile(files[i], 'image');
+    }
+    if (files.length > 1) status = `Imported ${files.length} images`;
+  }}
+/>
+<input
+  bind:this={vidIn}
+  type="file"
+  accept="video/*"
+  multiple
+  hidden
+  onchange={async (e) => {
+    const files = [...(e.currentTarget.files || [])];
+    e.currentTarget.value = '';
+    for (let i = 0; i < files.length; i++) {
+      status = files.length > 1 ? `Importing video ${i + 1}/${files.length}…` : '';
+      await addAssetFile(files[i], 'video');
+    }
+    if (files.length > 1) status = `Imported ${files.length} videos`;
+  }}
+/>
+<input
+  bind:this={audIn}
+  type="file"
+  accept="audio/*"
+  multiple
+  hidden
+  onchange={async (e) => {
+    const files = [...(e.currentTarget.files || [])];
+    e.currentTarget.value = '';
+    for (let i = 0; i < files.length; i++) {
+      status = files.length > 1 ? `Importing audio ${i + 1}/${files.length}…` : '';
+      await addAssetFile(files[i], 'audio');
+    }
+    if (files.length > 1) status = `Imported ${files.length} audio files`;
+  }}
+/>
 
 <CategoryBlock title="Media Bin (Videos, Banners, Logos, Audio)" icon="folder" open={true}>
   <div class="bar">

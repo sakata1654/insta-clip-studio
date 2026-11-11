@@ -294,14 +294,13 @@ export const ISLAMIC_TERM_MODES = {
 
 export const SHORTCUT_DEFAULTS = {
   play: 'Space',
-  split: 's',
+  split: 'd',
   undo: 'Ctrl+z',
   redo: 'Ctrl+Shift+z',
+  delete: 'Delete',
+  save: 'Ctrl+s',
   previous: 'ArrowLeft',
   next: 'ArrowRight',
-  setStart: 'i',
-  setEnd: 'o',
-  save: 'Ctrl+s',
 };
 
 export const BN0 = {

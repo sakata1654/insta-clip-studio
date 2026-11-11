@@ -108,23 +108,23 @@
     } else if (studio.shortcutMatch(e, 'play')) {
       e.preventDefault();
       stageRef?.togglePlay();
+    } else if (studio.shortcutMatch(e, 'split')) {
+      e.preventDefault();
+      studio.splitSelectedAtPlayhead();
+    } else if (e.key === 'Delete' || e.key === 'Backspace' || studio.shortcutMatch(e, 'delete')) {
+      if (studio.sel || studio.selectedOverlayId) {
+        e.preventDefault();
+        studio.deleteSelectedBlock();
+      }
     } else if (studio.shortcutMatch(e, 'save')) {
       e.preventDefault();
       studio.saveProjectStore();
-    } else if (studio.shortcutMatch(e, 'setStart')) {
-      e.preventDefault();
-      studio.trimS = Math.min(studio.currentPlayhead(), studio.trimE - 0.2);
-      studio.inv();
-    } else if (studio.shortcutMatch(e, 'setEnd')) {
-      e.preventDefault();
-      studio.trimE = Math.max(studio.currentPlayhead(), studio.trimS + 0.2);
-      studio.inv();
     } else if (studio.shortcutMatch(e, 'previous')) {
       e.preventDefault();
-      studio.seek(studio.currentPlayhead() - (e.shiftKey ? 1 : 0.1));
+      studio.stepFrame(-1);
     } else if (studio.shortcutMatch(e, 'next')) {
       e.preventDefault();
-      studio.seek(studio.currentPlayhead() + (e.shiftKey ? 1 : 0.1));
+      studio.stepFrame(1);
     }
   }
 

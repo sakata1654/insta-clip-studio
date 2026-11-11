@@ -557,4 +557,22 @@
     color: var(--text-secondary);
     cursor: pointer;
   }
+  @media (max-width: 920px) {
+    .tr-page {
+      grid-template-columns: 1fr;
+      overflow-y: auto;
+    }
+    .tr-side {
+      border-right: 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .tr-list {
+      overflow: visible;
+    }
+  }
+  @media (max-width: 720px) {
+    .tr-row {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>

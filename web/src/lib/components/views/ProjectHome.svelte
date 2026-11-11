@@ -20,11 +20,10 @@
     split: 'Split Subtitle at Playhead',
     undo: 'Undo',
     redo: 'Redo',
-    previous: 'Step Backward',
-    next: 'Step Forward',
-    setStart: 'Set Range Start [In]',
-    setEnd: 'Set Range End [Out]',
+    delete: 'Delete Selected Subtitle',
     save: 'Save Project',
+    previous: 'Previous Frame',
+    next: 'Next Frame',
   };
 
   const visibleProjects = $derived.by(() => {
@@ -777,21 +776,29 @@
   }
 
   @media (max-width: 780px) {
+    .home-shell {
+      padding-bottom: var(--sab);
+    }
     .home-topbar {
       height: auto;
-      padding: 12px 16px;
+      padding: calc(12px + var(--sat)) calc(14px + var(--sar)) 12px calc(14px + var(--sal));
       flex-wrap: wrap;
       gap: 10px;
     }
     .home-main {
-      padding: 18px 16px 32px;
+      padding: 16px calc(14px + var(--sar)) calc(28px + var(--sab)) calc(14px + var(--sal));
     }
     .sec-header {
       flex-wrap: wrap;
       gap: 10px;
     }
     .search-inp {
-      width: 150px;
+      width: 140px;
+    }
+  }
+  @media (max-width: 520px) {
+    .proj-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>

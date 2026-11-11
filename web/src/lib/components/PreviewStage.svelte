@@ -1,11 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import { DIMS } from '../constants.js';
-  import { createTimedBackground, loadVideoPath, openVideoFile } from '../mediaHelpers.js';
+  import { createTimedBackground, openVideoFile, pickAndOpenVideo } from '../mediaHelpers.js';
   import { renderCanvasFrame, resizeScratch, vg } from '../renderer.js';
   import { cl, fmt, studio } from '../state.svelte.js';
   import { applyStudioPreset, BUILT_IN_STUDIO_PRESETS } from '../studioPresets.js';
-  import { getTauri } from '../tauriBridge.js';
+  import { viewport } from '../webPlatform/viewport.svelte.js';
   import Icon from './Icon.svelte';
 
   let { onOpenProjects = () => {}, onSelectWorkflow = () => {} } = $props();
@@ -14,6 +14,9 @@
   let canvasEl = $state(null);
   let pd = $state(null);
   let quickVidIn = $state(null);
+  let hudControlsOpen = $state(false);
+  const touchPts = new Map();
+  let pinchState = null;
 
   const formats = Object.keys(DIMS);
   const hasMediaOrSample = $derived(!!(studio.file || studio.aud.track || studio.sampleSub));
@@ -35,8 +38,10 @@
     canvasEl.height = Math.round(LH * sc);
     resizeScratch(LW, LH);
     const r = LW / LH;
-    const w = Math.max(100, stageEl.clientWidth - 36);
-    const h = Math.max(100, stageEl.clientHeight - 58);
+    const padW = viewport.isMobile ? 16 : 36;
+    const padH = viewport.isMobile ? 46 : 58;
+    const w = Math.max(96, stageEl.clientWidth - padW);
+    const h = Math.max(96, stageEl.clientHeight - padH);
     let cw = w;
     let ch = w / r;
     if (ch > h) {
@@ -89,21 +94,15 @@
     void studio.aspect;
     void studio.previewScale;
     void studio.previewZoom;
+    void studio.previewFullscreen;
+    void viewport.width;
+    void viewport.height;
     syncCanvasSize();
   });
 
   async function quickPickVideo() {
-    const T = getTauri();
-    if (T?.dialog) {
-      try {
-        const p = await T.dialog.open({ filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] }] });
-        if (p) await loadVideoPath(p);
-      } catch (e) {
-        studio.toast(String(e));
-      }
-    } else {
-      quickVidIn?.click();
-    }
+    const ok = await pickAndOpenVideo();
+    if (!ok && !window.showOpenFilePicker) quickVidIn?.click();
   }
 
   const cp = (e) => {
@@ -114,6 +113,14 @@
   const inBox = (b, x, y) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 
   function onPointerDown(e) {
+    touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touchPts.size === 2) {
+      const pts = [...touchPts.values()];
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      pinchState = { dist0: Math.max(10, dist), zoom0: studio.fx.zoom };
+      pd = null;
+      return;
+    }
     const [x, y] = cp(e);
     const fb = studio.frBox;
     const box = studio.fr.on && fb ? fb : { x: 0, y: 0, w: studio.LW, h: studio.LH };
@@ -180,15 +187,34 @@
     else if (inBox(box, x, y)) {
       pd =
         studio.fr.on && (studio.dm === 'frame' || e.shiftKey)
-          ? { fr: 1, x0: x, y0: y, fx: studio.fr.x, fy: studio.fr.y }
-          : { pan: 1, x0: x, y0: y, px: studio.fx.px, py: studio.fx.py, bw: box.w, bh: box.h };
-    } else return;
+          ? { fr: 1, x0: x, y0: y, fx: studio.fr.x, fy: studio.fr.y, cx0: e.clientX, cy0: e.clientY }
+          : { pan: 1, x0: x, y0: y, px: studio.fx.px, py: studio.fx.py, bw: box.w, bh: box.h, cx0: e.clientX, cy0: e.clientY };
+    } else {
+      pd = { tapOnly: 1, cx0: e.clientX, cy0: e.clientY };
+    }
 
-    canvasEl.setPointerCapture(e.pointerId);
+    if (pd) pd.moved = false;
+    try { canvasEl.setPointerCapture(e.pointerId); } catch {}
     studio.inv();
   }
 
   function onPointerMove(e) {
+    if (touchPts.has(e.pointerId)) {
+      touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (pinchState && touchPts.size === 2) {
+      const pts = [...touchPts.values()];
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      const scale = dist / pinchState.dist0;
+      studio.fx.zoom = cl(Math.round(pinchState.zoom0 * scale), 100, 300);
+      studio.saveShot();
+      studio.inv();
+      return;
+    }
+    if (pd && pd.cx0 !== undefined && Math.hypot(e.clientX - pd.cx0, e.clientY - pd.cy0) > 6) {
+      pd.moved = true;
+    }
+    if (pd?.tapOnly) return;
     const [x, y] = cp(e);
     if (!pd) {
       let h = null;
@@ -357,10 +383,10 @@
   }}
 />
 
-<section class="stage-col">
+<section class="stage-col" class:fs={studio.previewFullscreen}>
   <div class="stage-canvas-area" bind:this={stageEl}>
     <div class="hud-top">
-      <div class="hud-group">
+      <div class="hud-group aspect-group">
         {#each formats as f}
           <button
             type="button"
@@ -376,46 +402,62 @@
       </div>
 
       <div class="hud-group">
-        <select
-          class="mini-sel"
-          aria-label="Preview zoom"
-          value={String(studio.previewZoom)}
-          onchange={(e) => (studio.previewZoom = +e.currentTarget.value)}
-        >
-          <option value="0.75">Zoom 75%</option>
-          <option value="1">Fit 100%</option>
-          <option value="1.25">125%</option>
-          <option value="1.5">150%</option>
-        </select>
-        <button
-          type="button"
-          class:on={!!studio.sampleSub}
-          onclick={() => {
-            studio.sampleSub ^= 1;
-            studio.inv();
-          }}
-          title="Toggle preview sample subtitles"
-        >
-          <Icon name="eye" size={13} /> Sample
-        </button>
-        <button
-          type="button"
-          class:on={!!studio.guides}
-          onclick={() => {
-            studio.guides ^= 1;
-            studio.inv();
-          }}
-          title="Toggle social platform safe-zone overlay"
-        >
-          Safe zones
-        </button>
-        {#if studio.guides}
-          <select class="mini-sel" value={studio.guideMode} onchange={(e) => ((studio.guideMode = e.currentTarget.value), studio.inv())}>
-            <option value="reels">Reels</option>
-            <option value="tiktok">TikTok</option>
-            <option value="shorts">Shorts</option>
+        {#if !viewport.isMobile || hudControlsOpen}
+          <select
+            class="mini-sel"
+            aria-label="Preview zoom"
+            value={String(studio.previewZoom)}
+            onchange={(e) => (studio.previewZoom = +e.currentTarget.value)}
+          >
+            <option value="0.75">Zoom 75%</option>
+            <option value="1">Fit 100%</option>
+            <option value="1.25">125%</option>
+            <option value="1.5">150%</option>
           </select>
+          <button
+            type="button"
+            class:on={!!studio.sampleSub}
+            onclick={() => {
+              studio.sampleSub ^= 1;
+              studio.inv();
+            }}
+            title="Toggle preview sample subtitles"
+          >
+            <Icon name="eye" size={13} /> {!viewport.isMobile ? 'Sample' : ''}
+          </button>
+          <button
+            type="button"
+            class:on={!!studio.guides}
+            onclick={() => {
+              studio.guides ^= 1;
+              studio.inv();
+            }}
+            title="Toggle social platform safe-zone overlay"
+          >
+            Safe
+          </button>
+          {#if studio.guides}
+            <select class="mini-sel" value={studio.guideMode} onchange={(e) => ((studio.guideMode = e.currentTarget.value), studio.inv())}>
+              <option value="reels">Reels</option>
+              <option value="tiktok">TikTok</option>
+              <option value="shorts">Shorts</option>
+            </select>
+          {/if}
         {/if}
+        {#if viewport.isMobile}
+          <button type="button" class:on={hudControlsOpen} onclick={() => (hudControlsOpen = !hudControlsOpen)} aria-label="Toggle canvas tools">
+            <Icon name="sliders" size={13} />
+          </button>
+        {/if}
+        <button
+          type="button"
+          class:on={studio.previewFullscreen}
+          onclick={() => (studio.previewFullscreen = !studio.previewFullscreen)}
+          title={studio.previewFullscreen ? 'Exit fullscreen preview' : 'Expand fullscreen preview'}
+          aria-label="Toggle fullscreen preview"
+        >
+          <Icon name={studio.previewFullscreen ? 'minimize' : 'maximize'} size={13} />
+        </button>
       </div>
     </div>
 
@@ -427,15 +469,27 @@
           studio.hov = 1;
           studio.inv();
         }}
-        onpointerleave={() => {
+        onpointerleave={(e) => {
+          touchPts.delete(e.pointerId);
           studio.hov = 0;
           studio.hoverLayer = null;
           studio.inv();
         }}
+        onpointercancel={(e) => {
+          touchPts.delete(e.pointerId);
+          pinchState = null;
+          pd = null;
+        }}
         onpointerdown={onPointerDown}
         onpointermove={onPointerMove}
-        onpointerup={() => {
-          if (pd) studio.snap();
+        onpointerup={(e) => {
+          touchPts.delete(e.pointerId);
+          if (touchPts.size < 2) pinchState = null;
+          if (viewport.isCoarse && pd && !pd.moved && (pd.tapOnly || pd.pan) && hasMediaOrSample) {
+            togglePlay();
+          } else if (pd && !pd.tapOnly) {
+            studio.snap();
+          }
           pd = null;
         }}
         onwheel={onWheel}
@@ -447,17 +501,17 @@
         <div class="es-icon"><Icon name="media" size={22} /></div>
         <h3>No Video Loaded</h3>
         <p class="hint" style="margin:4px 0 14px">
-          Drop a video file directly onto the canvas, import media, or preview a sample template layout.
+          {viewport.isMobile ? 'Tap Open Video to pick from your phone library or preview a look.' : 'Drop a video file directly onto the canvas, import media, or preview a sample template layout.'}
         </p>
         <div class="bar" style="justify-content:center;margin:0">
           <button type="button" class="sm pri" onclick={quickPickVideo}>
             <Icon name="upload" size={13} /> Open Video
           </button>
           <button type="button" class="sm" onclick={() => onSelectWorkflow('media')}>
-            <Icon name="download" size={13} /> Download URL
+            <Icon name="layers" size={13} /> Media &amp; Audio
           </button>
           <button type="button" class="sm ghost" onclick={() => launchTemplatePreview(BUILT_IN_STUDIO_PRESETS[0])}>
-            Preview News Look
+            Preview Look
           </button>
         </div>
       </div>
@@ -549,6 +603,13 @@
     min-height: 0;
     min-width: 0;
     background: var(--bg-canvas);
+  }
+  .stage-col.fs {
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    padding-top: var(--sat);
+    padding-bottom: var(--sab);
   }
   .stage-canvas-area {
     position: relative;
@@ -695,6 +756,24 @@
     }
     .transport-bar {
       grid-template-columns: auto 1fr;
+      padding: 0 10px;
+    }
+    .hud-top {
+      left: 8px;
+      right: 8px;
+      top: 8px;
+      gap: 4px;
+    }
+    .hud-group button {
+      padding: 4px 6px;
+      font-size: 10.8px;
+    }
+    .canvas-scroll {
+      padding: 42px 8px 8px;
+    }
+    .empty-stage-card {
+      max-width: calc(100vw - 24px);
+      padding: 18px 16px;
     }
   }
 </style>

@@ -58,6 +58,11 @@
   --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast:  110ms;
   --dur-mid:   160ms;
+
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
 }
 
 /* ─── Crisp Studio Light Theme ───────────────────────────────────── */
@@ -109,11 +114,15 @@
 
 html, body, #svelte-root {
   height: 100%;
+  height: 100dvh;
+  width: 100%;
   margin: 0;
   background: var(--bg-canvas);
   color: var(--text-primary);
   font: 13px/1.45 'Inter', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -558,4 +567,71 @@ input[type='color'] {
   padding: 20px;
   box-shadow: var(--shadow-lg);
   color: var(--text-primary);
+  max-height: calc(100dvh - 32px - var(--sat) - var(--sab));
+  overflow-y: auto;
+}
+
+/* ─── Adaptive Touch, Mobile & Reduced-Motion Refinements ────────── */
+@media (pointer: coarse) {
+  button,
+  select,
+  input:not([type='range']):not([type='checkbox']):not([type='color']) {
+    min-height: 38px;
+  }
+  button.sm {
+    min-height: 36px;
+    padding: 6px 11px;
+  }
+  button.xs {
+    min-height: 32px;
+    padding: 5px 9px;
+  }
+  input[type='range'] {
+    height: 6px;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+  }
+  input[type='checkbox'] {
+    width: 38px;
+    min-width: 38px;
+    height: 22px;
+  }
+  input[type='checkbox']::after {
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+  }
+  input[type='checkbox']:checked::after {
+    transform: translateX(16px);
+  }
+}
+
+@media (max-width: 599px) {
+  .seg-pills.quad {
+    grid-template-columns: 1fr 1fr;
+  }
+  .prop-row {
+    grid-template-columns: 92px 1fr 44px;
+  }
+}
+
+@media (max-width: 390px) {
+  .sg {
+    grid-template-columns: 1fr;
+  }
+  .preset-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

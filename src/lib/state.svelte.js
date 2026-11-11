@@ -217,7 +217,12 @@ class StudioStore {
   constructor() {
     if (typeof window !== 'undefined') {
       try {
-        this.shortcuts = { ...SHORTCUT_DEFAULTS, ...JSON.parse(localStorage.getItem('icsShortcuts') || '{}') };
+        const storedSc = JSON.parse(localStorage.getItem('icsShortcuts') || '{}');
+        const cleanedSc = {};
+        for (const k of Object.keys(SHORTCUT_DEFAULTS)) {
+          if (storedSc[k]) cleanedSc[k] = k === 'split' && storedSc[k] === 's' ? SHORTCUT_DEFAULTS.split : storedSc[k];
+        }
+        this.shortcuts = { ...SHORTCUT_DEFAULTS, ...cleanedSc };
       } catch {}
       try {
         this.API = { ...this.API, ...JSON.parse(localStorage.icsApi || '{}') };
@@ -605,21 +610,135 @@ class StudioStore {
     this.toast(`Updated ${this.subs.length} subtitles (max ${maxW || '∞'}w · pad −${padB}/+${padA}ms)`);
   }
 
+  stepFrame(dir = 1) {
+    const fps = Math.max(15, Number(this.ex?.fps) || 30);
+    const maxD = this.dur || this.audioDuration || 0;
+    const nextT = cl(this.currentPlayhead() + dir * (1 / fps), 0, maxD || Infinity);
+    this.seek(nextT);
+  }
+
+  splitSelectedAtPlayhead() {
+    const t = this.currentPlayhead();
+    // Prefer selected subtitle if playhead falls inside it; else fallback to subtitle under playhead
+    let ix = this.sel ? this.subs.findIndex((s) => s.id === this.sel && t > s.s + 0.04 && t < s.e - 0.04) : -1;
+    if (ix < 0) {
+      if (this.sel && this.subs.some((s) => s.id === this.sel)) {
+        return this.toast('Move playhead inside the selected subtitle block to split (D)');
+      }
+      ix = this.subs.findIndex((s) => t > s.s + 0.04 && t < s.e - 0.04);
+    }
+    if (ix < 0) return this.toast('Move playhead inside a subtitle block to split (D)');
+
+    const s = this.subs[ix];
+    const ws = String(s.t || '').trim().split(/\s+/).filter(Boolean);
+    if (ws.length < 2) return this.toast('Need at least 2 words in subtitle to split');
+
+    let splitIdx = -1;
+    if (Array.isArray(s.words) && s.words.length === ws.length) {
+      for (let i = 1; i < s.words.length; i++) {
+        if ((s.words[i].s + s.words[i - 1].e) * 0.5 >= t) {
+          splitIdx = i;
+          break;
+        }
+      }
+      if (splitIdx < 0) splitIdx = ws.length - 1;
+    } else {
+      const ratio = (t - s.s) / Math.max(0.1, s.e - s.s);
+      splitIdx = Math.max(1, Math.min(ws.length - 1, Math.round(ws.length * ratio)));
+    }
+
+    const leftWords = Array.isArray(s.words) && s.words.length === ws.length ? s.words.slice(0, splitIdx) : undefined;
+    const rightWords = Array.isArray(s.words) && s.words.length === ws.length ? s.words.slice(splitIdx) : undefined;
+    const right = {
+      ...s,
+      id: this.nextId(),
+      s: t,
+      rawS: t,
+      e: s.e,
+      rawE: s.rawE ?? s.e,
+      t: ws.slice(splitIdx).join(' '),
+      ...(s.orig !== undefined ? { orig: ws.slice(splitIdx).join(' ') } : {}),
+      ...(rightWords ? { words: rightWords } : { words: undefined }),
+    };
+    s.e = t;
+    s.rawE = t;
+    s.t = ws.slice(0, splitIdx).join(' ');
+    if (s.orig !== undefined) s.orig = s.t;
+    if (leftWords) s.words = leftWords;
+
+    this.subs.splice(ix + 1, 0, right);
+    this.sel = right.id;
+    this.inv();
+    this.snap();
+    return right;
+  }
+
+  deleteSelectedBlock() {
+    if (this.selectedOverlayId) {
+      this.mediaOverlays = this.mediaOverlays.filter((o) => o.id !== this.selectedOverlayId);
+      this.selectedOverlayId = null;
+      this.inv();
+      this.snap();
+      return true;
+    }
+    if (this.sel) {
+      const sIdx = this.subs.findIndex((s) => s.id === this.sel);
+      if (sIdx >= 0) {
+        this.subs.splice(sIdx, 1);
+        this.sel = null;
+        this.inv();
+        this.snap();
+        return true;
+      }
+      const tIdx = this.texts.findIndex((x) => x.id === this.sel);
+      if (tIdx >= 0) {
+        this.texts.splice(tIdx, 1);
+        this.sel = null;
+        this.inv();
+        this.snap();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  mergeSubByIds(leftId, rightId) {
+    const idxA = this.subs.findIndex((x) => x.id === leftId);
+    const idxB = this.subs.findIndex((x) => x.id === rightId);
+    if (idxA < 0 || idxB < 0 || idxA === idxB) return false;
+    const [firstIdx, secondIdx] = this.subs[idxA].s <= this.subs[idxB].s ? [idxA, idxB] : [idxB, idxA];
+    const cur = this.subs[firstIdx];
+    const nx = this.subs[secondIdx];
+    if (!cur || !nx) return false;
+
+    const curW = Array.isArray(cur.words) && cur.words.length ? cur.words : synthWords(cur);
+    const nxW = Array.isArray(nx.words) && nx.words.length ? nx.words : synthWords(nx);
+    const gapSec = Math.max(0, Math.round((nx.s - cur.e) * 1000) / 1000);
+
+    cur.s = Math.min(cur.s, nx.s);
+    cur.rawS = cur.rawS !== undefined ? Math.min(cur.rawS, nx.rawS ?? nx.s) : cur.s;
+    cur.e = Math.max(cur.e, nx.e);
+    cur.rawE = Math.max(cur.rawE ?? cur.e, nx.rawE ?? nx.e);
+    cur.t = (String(cur.t || '').trim() + ' ' + String(nx.t || '').trim()).replace(/\s+/g, ' ').trim();
+    if (cur.orig !== undefined || nx.orig !== undefined) {
+      cur.orig = (String(cur.orig ?? cur.t).trim() + ' ' + String(nx.orig ?? nx.t).trim()).replace(/\s+/g, ' ').trim();
+    }
+    if (cur.tr || nx.tr) cur.tr = ((cur.tr || '') + ' ' + (nx.tr || '')).replace(/\s+/g, ' ').trim();
+    cur.words = [...curW, ...nxW];
+    if (gapSec > 0.05) cur.gapPreservedSec = gapSec;
+
+    this.subs.splice(secondIdx, 1);
+    this.sel = cur.id;
+    this.inv();
+    this.snap();
+    return true;
+  }
+
   mergeSubAt(idx) {
     const cur = this.subs[idx];
     const nx = this.subs[idx + 1];
     if (!cur || !nx) return this.toast('No next subtitle to merge');
-    cur.e = Math.max(cur.e, nx.e);
-    cur.rawE = nx.rawE ?? nx.e;
-    cur.t = (cur.t + ' ' + nx.t).replace(/\s+/g, ' ').trim();
-    if (cur.orig !== undefined || nx.orig !== undefined) {
-      cur.orig = ((cur.orig ?? cur.t) + ' ' + (nx.orig ?? nx.t)).trim();
-    }
-    if (cur.tr || nx.tr) cur.tr = ((cur.tr || '') + ' ' + (nx.tr || '')).trim();
-    if (cur.words && nx.words) cur.words = [...cur.words, ...nx.words];
-    this.subs.splice(idx + 1, 1);
-    this.inv();
-    this.snap();
+    return this.mergeSubByIds(cur.id, nx.id);
   }
 
   /**
