@@ -75,7 +75,7 @@
     <StyleFieldRow label="Auto-archive files" type="check" value={studio.ex.arch} onchange={(v) => (studio.ex.arch = v ? 1 : 0)} />
     <StyleFieldRow label="CRF quality" value={studio.ex.crf} min={14} max={28} onchange={(v) => (studio.ex.crf = v)} />
     <div class="bar" style="margin-top:8px">
-      <button type="button" class="pri" style="flex:1" disabled={studio.exporting} onclick={() => exportAll()}>Export MP4 Video</button>
+      <button type="button" class="pri" style="flex:1" onclick={() => exportAll()}>Export MP4 in Background</button>
       <button
         type="button"
         class="sm"
@@ -88,12 +88,35 @@
         Thumbnail
       </button>
     </div>
-    <div class="pbar"><i style="width:{studio.exportPct}%"></i></div>
-    <div class="hint" style="margin-bottom:2px">{studio.exportLabel}</div>
-    {#if studio.exportStatus}
-      <div class="hint">{studio.exportStatus}</div>
-    {/if}
+    <p class="hint" style="margin:4px 0 0">Runs silently offscreen — you can keep editing or switch projects while it renders.</p>
   </CategoryBlock>
+
+  {#if studio.exportJobs.length}
+    <CategoryBlock title="Background Export Queue ({studio.exportJobs.length})" icon="layers" open={true}>
+      <div class="bar" style="justify-content:flex-end;margin-bottom:6px">
+        {#if studio.exportJobs.some((j) => j.done)}
+          <button type="button" class="xs ghost" onclick={() => studio.clearFinishedJobs()}>Clear Finished</button>
+        {/if}
+      </div>
+      {#each studio.exportJobs as j (j.id)}
+        <div class="sub-card">
+          <div class="rt" style="justify-content:space-between;gap:6px">
+            <b style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{j.name}</b>
+            <span class="badge" class:ok={j.done && !j.error} class:err={j.error} class:pri={!j.done}>
+              {j.done ? (j.error ? 'Failed' : 'Done') : `${j.pct}%`}
+            </span>
+          </div>
+          <div class="pbar" style="margin:6px 0"><i style="width:{j.pct}%"></i></div>
+          <div class="rt" style="justify-content:space-between">
+            <span class="hint" style="margin:0;font-size:11px">{j.label}</span>
+            {#if !j.done && j.cancel}
+              <button type="button" class="xs danger" onclick={() => j.cancel()}>Cancel</button>
+            {/if}
+          </div>
+        </div>
+      {/each}
+    </CategoryBlock>
+  {/if}
 {:else if modeTab === 'aud'}
   <CategoryBlock title="Audio Mastering & Vocal Separation" icon="sparkles" open={true}>
     <StyleFieldRow label="Studio enhance" type="check" value={studio.aud.enh} onchange={(v) => (studio.aud.enh = v ? 1 : 0)} />

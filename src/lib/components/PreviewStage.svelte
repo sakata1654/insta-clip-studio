@@ -35,16 +35,17 @@
     canvasEl.height = Math.round(LH * sc);
     resizeScratch(LW, LH);
     const r = LW / LH;
-    const w = Math.max(100, stageEl.clientWidth - 28);
-    const h = Math.max(100, stageEl.clientHeight - 28);
+    const w = Math.max(100, stageEl.clientWidth - 36);
+    const h = Math.max(100, stageEl.clientHeight - 58);
     let cw = w;
     let ch = w / r;
     if (ch > h) {
       ch = h;
       cw = h * r;
     }
-    canvasEl.style.width = Math.max(1, cw) + 'px';
-    canvasEl.style.height = Math.max(1, ch) + 'px';
+    const z = studio.previewZoom || 1;
+    canvasEl.style.width = Math.max(1, cw * z) + 'px';
+    canvasEl.style.height = Math.max(1, ch * z) + 'px';
     studio.inv();
   }
 
@@ -87,6 +88,7 @@
   $effect(() => {
     void studio.aspect;
     void studio.previewScale;
+    void studio.previewZoom;
     syncCanvasSize();
   });
 
@@ -374,6 +376,17 @@
       </div>
 
       <div class="hud-group">
+        <select
+          class="mini-sel"
+          aria-label="Preview zoom"
+          value={String(studio.previewZoom)}
+          onchange={(e) => (studio.previewZoom = +e.currentTarget.value)}
+        >
+          <option value="0.75">Zoom 75%</option>
+          <option value="1">Fit 100%</option>
+          <option value="1.25">125%</option>
+          <option value="1.5">150%</option>
+        </select>
         <button
           type="button"
           class:on={!!studio.sampleSub}
@@ -381,6 +394,7 @@
             studio.sampleSub ^= 1;
             studio.inv();
           }}
+          title="Toggle preview sample subtitles"
         >
           <Icon name="eye" size={13} /> Sample
         </button>
@@ -391,6 +405,7 @@
             studio.guides ^= 1;
             studio.inv();
           }}
+          title="Toggle social platform safe-zone overlay"
         >
           Safe zones
         </button>
@@ -404,136 +419,59 @@
       </div>
     </div>
 
-    <canvas
-      bind:this={canvasEl}
-      class="canvas-el"
-      onpointerenter={() => {
-        studio.hov = 1;
-        studio.inv();
-      }}
-      onpointerleave={() => {
-        studio.hov = 0;
-        studio.hoverLayer = null;
-        studio.inv();
-      }}
-      onpointerdown={onPointerDown}
-      onpointermove={onPointerMove}
-      onpointerup={() => {
-        if (pd) studio.snap();
-        pd = null;
-      }}
-      onwheel={onWheel}
-    ></canvas>
+    <div class="canvas-scroll">
+      <canvas
+        bind:this={canvasEl}
+        class="canvas-el"
+        onpointerenter={() => {
+          studio.hov = 1;
+          studio.inv();
+        }}
+        onpointerleave={() => {
+          studio.hov = 0;
+          studio.hoverLayer = null;
+          studio.inv();
+        }}
+        onpointerdown={onPointerDown}
+        onpointermove={onPointerMove}
+        onpointerup={() => {
+          if (pd) studio.snap();
+          pd = null;
+        }}
+        onwheel={onWheel}
+      ></canvas>
+    </div>
 
     {#if !hasMediaOrSample}
-      <div class="start-dashboard">
-        <div class="sd-hero">
-          <div class="wc-icon"><Icon name="film" size={24} /></div>
-          <div class="sd-hero-txt">
-            <div class="rt" style="gap:8px">
-              <h3>InstaClip Studio</h3>
-              <span class="badge pri">PRO v1.5</span>
-            </div>
-            <p class="hint" style="margin:3px 0 0">
-              Drop any video file anywhere, download from URL, or start from a broadcast-ready look.
-            </p>
-          </div>
-        </div>
-
-        <div class="sd-actions">
-          <button type="button" class="sd-action-card pri-card" onclick={quickPickVideo}>
-            <span class="sd-act-ic"><Icon name="upload" size={18} /></span>
-            <span class="sd-act-body">
-              <b>Open Local Video</b>
-              <span>MP4, MOV, MKV, WebM</span>
-            </span>
+      <div class="empty-stage-card">
+        <div class="es-icon"><Icon name="media" size={22} /></div>
+        <h3>No Video Loaded</h3>
+        <p class="hint" style="margin:4px 0 14px">
+          Drop a video file directly onto the canvas, import media, or preview a sample template layout.
+        </p>
+        <div class="bar" style="justify-content:center;margin:0">
+          <button type="button" class="sm pri" onclick={quickPickVideo}>
+            <Icon name="upload" size={13} /> Open Video
           </button>
-
-          <button type="button" class="sd-action-card" onclick={() => onSelectWorkflow('media')}>
-            <span class="sd-act-ic"><Icon name="download" size={18} /></span>
-            <span class="sd-act-body">
-              <b>URL &amp; Media Bin</b>
-              <span>YouTube, B-Roll, Audio</span>
-            </span>
+          <button type="button" class="sm" onclick={() => onSelectWorkflow('media')}>
+            <Icon name="download" size={13} /> Download URL
           </button>
-
-          <button type="button" class="sd-action-card" onclick={onOpenProjects}>
-            <span class="sd-act-ic"><Icon name="folder" size={18} /></span>
-            <span class="sd-act-body">
-              <b>Projects Library</b>
-              <span>{studio.projects.length} saved · Import .JSON</span>
-            </span>
+          <button type="button" class="sm ghost" onclick={() => launchTemplatePreview(BUILT_IN_STUDIO_PRESETS[0])}>
+            Preview News Look
           </button>
         </div>
-
-        <div class="sd-section">
-          <div class="sd-sec-hdr">
-            <span>INSTANT TEMPLATE PREVIEWS</span>
-            <button type="button" class="xs ghost" onclick={() => onSelectWorkflow('presets')}>All Presets →</button>
-          </div>
-          <div class="sd-tpl-grid">
-            {#each BUILT_IN_STUDIO_PRESETS as bp (bp.id)}
-              <button type="button" class="sd-tpl" onclick={() => launchTemplatePreview(bp)}>
-                <div class="rt" style="justify-content:space-between;width:100%">
-                  <b>{bp.name}</b>
-                  <span class="badge">{bp.format}</span>
-                </div>
-                <span class="sd-tpl-desc">{bp.description}</span>
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        {#if studio.projects.length}
-          <div class="sd-section" style="margin-top:12px">
-            <div class="sd-sec-hdr">
-              <span>RECENT PROJECTS</span>
-              <button type="button" class="xs ghost" onclick={onOpenProjects}>Manage All →</button>
-            </div>
-            <div class="sd-recent-row">
-              {#each studio.projects.slice(0, 3) as p (p.id)}
-                <button type="button" class="sd-recent-chip" onclick={onOpenProjects}>
-                  <b>{p.name || 'Untitled'}</b>
-                  <span>{p.state?.subs?.length || 0} cues · {p.state?.aspect || '9:16'}</span>
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
       </div>
     {/if}
 
-    {#if studio.exporting}
-      <div class="export-cover">
-        <div>
-          <div style="font-size:20px;font-weight:700;margin-bottom:8px">Rendering MP4…</div>
-          <div class="pbar" style="width:320px;margin:12px auto"><i style="width:{studio.exportPct}%"></i></div>
-          <div class="hint">{studio.exportLabel}</div>
-        </div>
-      </div>
-    {/if}
   </div>
 
-  <!-- Centered Sleek Transport Bar -->
+  <!-- Minimalist Pro Transport Bar -->
   <div class="transport-bar">
-    <div class="tr-pill">
-      <button type="button" class="pri sm" onclick={togglePlay}>
-        <Icon name={studio.playing ? 'pause' : 'play'} size={13} />
-        {studio.playing ? 'Pause' : 'Play'}
-      </button>
-      <span class="time-pill mono">{fmt(studio.playhead)} / {fmt(studio.dur || studio.audioDuration)}</span>
-      <button
-        type="button"
-        class="xs ghost"
-        onclick={() => ((studio.trimS = Math.min(studio.currentPlayhead(), studio.trimE - 0.2)), studio.inv())}
-      >
+    <div class="tr-left">
+      <button type="button" class="xs ghost" onclick={() => ((studio.trimS = Math.min(studio.currentPlayhead(), studio.trimE - 0.2)), studio.inv())} title="Set clip start (I)">
         [ In
       </button>
-      <button
-        type="button"
-        class="xs ghost"
-        onclick={() => ((studio.trimE = Math.max(studio.currentPlayhead(), studio.trimS + 0.2)), studio.inv())}
-      >
+      <button type="button" class="xs ghost" onclick={() => ((studio.trimE = Math.max(studio.currentPlayhead(), studio.trimS + 0.2)), studio.inv())} title="Set clip end (O)">
         Out ]
       </button>
       <button
@@ -541,21 +479,38 @@
         class="xs"
         class:pri={studio.loopRange}
         onclick={() => (studio.loopRange = !studio.loopRange)}
-        title="Loop between In and Out"
+        title="Loop range"
       >
-        ↻ Loop
+        <Icon name="repeat" size={12} /> Loop
       </button>
-      <span class="v-sep"></span>
+    </div>
+
+    <div class="tr-center">
+      <button type="button" class="xs ghost" onclick={() => studio.seek(studio.trimS)} title="Jump to In point">
+        <Icon name="skip-back" size={13} />
+      </button>
+      <button type="button" class="play-btn" onclick={togglePlay} title="Play / Pause (Space)" aria-label="Play or pause">
+        <Icon name={studio.playing ? 'pause' : 'play'} size={14} />
+      </button>
+      <button type="button" class="xs ghost" onclick={() => studio.seek(studio.trimE || studio.dur)} title="Jump to Out point">
+        <Icon name="skip-forward" size={13} />
+      </button>
+      <span class="time-pill mono">{fmt(studio.playhead)} / {fmt(studio.dur || studio.audioDuration)}</span>
+    </div>
+
+    <div class="tr-right">
       <button
         type="button"
         class="xs"
         class:pri={studio.dm === 'frame'}
         onclick={() => (studio.dm = studio.dm === 'video' ? 'frame' : 'video')}
+        title="Toggle canvas drag target between panning video or moving card frame"
       >
         {studio.dm === 'frame' ? 'Move Card' : 'Pan Video'}
       </button>
       <select
         class="mini-sel"
+        aria-label="Playback speed"
         value={String(studio.speed)}
         onchange={(e) => {
           studio.speed = +e.currentTarget.value;
@@ -600,27 +555,28 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 44px 18px 12px;
-    background:
-      radial-gradient(rgba(255,255,255,0.028) 1px, transparent 1px),
-      radial-gradient(ellipse at 50% 60%, #0e1428 0%, var(--bg-canvas) 65%);
-    background-size: 22px 22px, 100% 100%;
+    overflow: hidden;
+    background: var(--bg-canvas);
+  }
+  .canvas-scroll {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    overflow: auto;
+    display: grid;
+    place-items: center;
+    padding: 46px 18px 14px;
   }
   .canvas-el {
-    max-width: 100%;
-    max-height: 100%;
-    background: #000;
-    border-radius: var(--radius-md);
-    box-shadow:
-      0 32px 90px rgba(0,0,0,0.9),
-      0 0 0 1px rgba(255,255,255,0.09),
-      0 0 60px rgba(99,102,241,0.08);
+    background: #000000;
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg), 0 0 0 1px var(--border-mid);
     cursor: move;
     touch-action: none;
   }
-  /* HUD overlay pill row (top) */
   .hud-top {
     position: absolute;
     top: 10px;
@@ -634,247 +590,111 @@
   .hud-group {
     pointer-events: auto;
     display: flex;
+    align-items: center;
     gap: 2px;
-    padding: 3px 4px;
-    background: rgba(10,13,22,0.84);
-    backdrop-filter: blur(14px) saturate(0.9);
-    border: 1px solid var(--border-mid);
-    border-radius: 99px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.055);
+    padding: 3px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
   }
   .hud-group button {
     border: 0;
     background: transparent;
-    padding: 4px 10px;
-    border-radius: 99px;
-    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: var(--radius-sm);
+    font-size: 11.2px;
     color: var(--text-thirdly);
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
+    font-weight: 560;
   }
   .hud-group button:hover {
     color: var(--text-primary);
-    background: rgba(255,255,255,0.07);
-  }
-  .hud-group button.on {
-    background: var(--accent-primary-soft);
-    color: #e8edf8;
-    box-shadow: inset 0 0 0 1px rgba(99,102,241,0.3);
-  }
-  /* Executive Starting Dashboard */
-  .start-dashboard {
-    position: absolute;
-    width: 620px;
-    max-width: 92%;
-    max-height: calc(100% - 64px);
-    overflow-y: auto;
-    background: rgba(13, 17, 25, 0.94);
-    backdrop-filter: blur(22px) saturate(1.1);
-    border: 1px solid var(--border-mid);
-    border-radius: var(--radius-xl);
-    padding: 24px;
-    box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.055);
-    z-index: 5;
-    animation: welcome-in 260ms var(--ease-out);
-  }
-  @keyframes welcome-in {
-    from { opacity: 0; transform: translateY(12px) scale(0.975); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  .sd-hero {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border-color);
-  }
-  .sd-hero h3 {
-    margin: 0;
-    font-size: 17px;
-    letter-spacing: -0.025em;
-    font-weight: 750;
-  }
-  .wc-icon {
-    width: 46px;
-    height: 46px;
-    border-radius: 12px;
-    background: var(--grad-accent);
-    color: #fff;
-    display: inline-grid;
-    place-items: center;
-    flex-shrink: 0;
-    box-shadow: 0 6px 20px color-mix(in srgb, var(--accent-primary) 35%, transparent);
-  }
-  .sd-actions {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    margin: 16px 0;
-  }
-  .sd-action-card {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px;
-    border-radius: var(--radius-lg);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    text-align: left;
-    justify-content: flex-start;
-    white-space: normal;
-  }
-  .sd-action-card:hover {
-    border-color: var(--accent-primary);
     background: var(--bg-hover);
   }
-  .sd-action-card.pri-card {
-    background: var(--grad-accent);
-    border-color: transparent;
-    color: #fff;
+  .hud-group button.on {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
-  .sd-action-card.pri-card span {
-    color: rgba(255, 255, 255, 0.84);
+  .empty-stage-card {
+    position: absolute;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--radius-xl);
+    padding: 24px 26px;
+    text-align: center;
+    max-width: 390px;
+    box-shadow: var(--shadow-lg);
+    z-index: 5;
   }
-  .sd-act-ic {
-    width: 34px;
-    height: 34px;
-    border-radius: 9px;
-    background: rgba(255, 255, 255, 0.08);
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-  }
-  .sd-act-body {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .sd-act-body b {
-    font-size: 12.2px;
+  .empty-stage-card h3 {
+    margin: 0;
+    font-size: 15px;
     font-weight: 650;
   }
-  .sd-act-body span {
-    font-size: 10.6px;
-    color: var(--text-thirdly);
+  .es-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-lg);
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: inline-grid;
+    place-items: center;
+    margin-bottom: 10px;
   }
-  .sd-section {
-    margin-top: 6px;
-  }
-  .sd-sec-hdr {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--text-thirdly);
-    margin-bottom: 7px;
-  }
-  .sd-tpl-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-  }
-  .sd-tpl {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
-    padding: 10px;
-    border-radius: var(--radius-md);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    text-align: left;
-    white-space: normal;
-  }
-  .sd-tpl:hover {
-    border-color: var(--accent-primary);
-    background: var(--accent-primary-soft);
-  }
-  .sd-tpl b {
-    font-size: 11.8px;
-  }
-  .sd-tpl-desc {
-    font-size: 10.5px;
-    color: var(--text-thirdly);
-    line-height: 1.38;
-  }
-  .sd-recent-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-  }
-  .sd-recent-chip {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    padding: 8px 10px;
-    border-radius: var(--radius-md);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    text-align: left;
-  }
-  .sd-recent-chip b {
-    font-size: 11.6px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-  .sd-recent-chip span {
-    font-size: 10.3px;
-    color: var(--text-thirdly);
-  }
-  /* Export progress overlay */
-  .export-cover {
-    position: absolute;
-    inset: 0;
-    z-index: 9;
-    background: rgba(6,8,13,0.92);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-  }
-  /* Transport bar */
   .transport-bar {
-    display: flex;
-    justify-content: center;
-    padding: 7px 12px;
-    background: var(--bg-canvas);
+    height: 44px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    background: var(--bg-titlebar);
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
   }
-  .tr-pill {
+  .tr-left,
+  .tr-center,
+  .tr-right {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 5px 10px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 99px;
-    flex-wrap: wrap;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.045);
+    gap: 6px;
+  }
+  .tr-center {
+    justify-content: center;
+  }
+  .tr-right {
+    justify-content: flex-end;
+  }
+  .play-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    border-color: transparent;
+    color: #ffffff;
+  }
+  .play-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
   .time-pill {
     font-size: 11.5px;
     color: var(--text-secondary);
-    padding: 0 5px;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-  }
-  .v-sep {
-    width: 1px;
-    height: 14px;
-    background: var(--border-mid);
+    padding-left: 6px;
+    font-weight: 560;
   }
   .mini-sel {
-    padding: 3px 22px 3px 8px;
-    font-size: 11px;
-    border-radius: 99px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%237a879f'/%3E%3C/svg%3E");
+    padding: 3px 20px 3px 8px;
+    font-size: 11.2px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+  }
+  @media (max-width: 980px) {
+    .tr-left {
+      display: none;
+    }
+    .transport-bar {
+      grid-template-columns: auto 1fr;
+    }
   }
 </style>

@@ -141,7 +141,7 @@
       studio.snap();
       subTab = 'edit';
     } catch (e) {
-      status = '❌ ' + (e?.message || e);
+      status = 'Error: ' + (e?.message || e);
     } finally {
       busy = false;
     }
@@ -178,10 +178,10 @@
         trPct = Math.round(((i + ch.length) / studio.subs.length) * 100);
         studio.inv();
       }
-      trStatus = `Done ✔ ${studio.subs.length} cues translated`;
+      trStatus = `Done · ${studio.subs.length} cues translated`;
       studio.snap();
     } catch (e) {
-      trStatus = '❌ ' + (e?.message || e);
+      trStatus = 'Error: ' + (e?.message || e);
     } finally {
       trBusy = false;
     }
@@ -287,7 +287,7 @@
         {busy ? 'Transcribing…' : 'Generate Subtitles'}
       </button>
       <button type="button" class="sm" onclick={() => studio.rewrapAndPad()} title="Apply word limit and padding">
-        ✂ Re-wrap
+        Re-wrap
       </button>
     </div>
     <div class="pbar"><i style="width:{pct}%"></i></div>
@@ -318,7 +318,7 @@
         }
       }}
     >
-      ✨ AI Split
+      AI Arrange
     </button>
     <button
       type="button"
@@ -337,7 +337,7 @@
         }
       }}
     >
-      🔎 Proofread
+      Proofread
     </button>
   </div>
 
@@ -434,7 +434,7 @@
           studio.toast('Dual Subtitles Enabled! Customize in Style tab.');
         }}
       >
-        ⚡ Enable Dual
+        Enable Dual Subs
       </button>
     </div>
     <div class="pbar"><i style="width:{trPct}%"></i></div>

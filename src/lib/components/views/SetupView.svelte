@@ -66,7 +66,12 @@
       {#each envItems as it}
         <div class="sub-card rt" style="justify-content:space-between">
           <div>
-            <b>{it.ok ? '✅' : it.req ? '❌' : '➖'} {it.name}</b>
+            <div class="rt" style="gap:6px">
+              <span class="badge" class:ok={it.ok} class:err={!it.ok && it.req}>
+                {it.ok ? 'Ready' : it.req ? 'Required' : 'Optional'}
+              </span>
+              <b>{it.name}</b>
+            </div>
             <div class="hint" style="margin:2px 0 0;font-size:11px">{it.detail || 'Not detected'}</div>
           </div>
           {#if !it.ok && it.inst}
@@ -78,7 +83,7 @@
                   await getTauri().core.invoke('install_tool', { name: it.inst });
                   await scanEnv();
                 } catch (e) {
-                  logText += '❌ ' + e + '\n';
+                  logText += 'Error: ' + e + '\n';
                 }
               }}
             >
@@ -104,9 +109,9 @@
               onclick={async () => {
                 elStatus = 'Testing…';
                 try {
-                  elStatus = '✅ ' + (await getTauri().core.invoke('test_elevenlabs', { key: ovr.elevenlabs_key || '' }));
+                  elStatus = 'OK: ' + (await getTauri().core.invoke('test_elevenlabs', { key: ovr.elevenlabs_key || '' }));
                 } catch (e) {
-                  elStatus = '❌ ' + (e?.message || e);
+                  elStatus = 'Error: ' + (e?.message || e);
                 }
               }}
             >

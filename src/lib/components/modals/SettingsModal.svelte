@@ -57,9 +57,9 @@
           body: JSON.stringify({ model, messages: [{ role: 'user', content: 'OK' }], temperature: 0 }),
         })
       );
-      apiStatus = r.ok ? '✅ Connected' : '❌ Error ' + r.status;
+      apiStatus = r.ok ? 'Connected' : 'Error: HTTP ' + r.status;
     } catch (e) {
-      apiStatus = '❌ ' + (e?.message || e);
+      apiStatus = 'Error: ' + (e?.message || e);
     }
   }
 
@@ -85,10 +85,11 @@
         <button type="button" class="xs" onclick={() => ((open = false), (studio.apiModalOpen = false))}>✕</button>
       </div>
 
-      <div class="seg-pills tri">
+      <div class="seg-pills quad">
         <button type="button" class:on={tab === 'ai'} onclick={() => (tab = 'ai')}>AI Providers</button>
-        <button type="button" class:on={tab === 'env'} onclick={() => (tab = 'env')}>Binaries & ElevenLabs</button>
+        <button type="button" class:on={tab === 'env'} onclick={() => (tab = 'env')}>Binaries &amp; Keys</button>
         <button type="button" class:on={tab === 'keys'} onclick={() => (tab = 'keys')}>Shortcuts</button>
+        <button type="button" class:on={tab === 'ui'} onclick={() => (tab = 'ui')}>Appearance</button>
       </div>
 
       {#if tab === 'ai'}
@@ -132,11 +133,23 @@
           <button type="button" class="pri sm" onclick={savePaths}>Save & Re-scan</button>
           <span class="hint" style="margin:0">{envStatus}</span>
         </div>
-      {:else}
+      {:else if tab === 'keys'}
         <div class="sg">
           {#each Object.entries(studio.shortcuts) as [k, v]}
             <label>{k}<input readonly value={v} /></label>
           {/each}
+        </div>
+      {:else}
+        <div class="sub-card">
+          <div class="rt" style="justify-content:space-between;margin-bottom:8px">
+            <b>Interface Theme</b>
+            <span class="badge">{studio.uiTheme === 'light' ? 'Light' : 'Dark Graphite'}</span>
+          </div>
+          <div class="seg-pills">
+            <button type="button" class:on={studio.uiTheme !== 'light'} onclick={() => studio.applyUiTheme('dark')}>Dark Graphite</button>
+            <button type="button" class:on={studio.uiTheme === 'light'} onclick={() => studio.applyUiTheme('light')}>Clean Light</button>
+          </div>
+          <p class="hint" style="margin:6px 0 0">Applies cleanly across the Project Homepage, Timeline Editor, Inspector, and Translation Desk.</p>
         </div>
       {/if}
     </div>

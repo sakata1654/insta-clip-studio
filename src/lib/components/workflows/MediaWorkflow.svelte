@@ -1,6 +1,14 @@
 <script>
+  import {
+    REJECT_REASONS,
+    findSmartClips,
+    getTrainerSummary,
+    loadTrainerProfile,
+    recordClipFeedback,
+    recordTrimAdjustment,
+    runSelfTrainingReflection,
+  } from '../../aiClipTrainer.js';
   import { loadVideoPath, openVideoFile } from '../../mediaHelpers.js';
-  import { aiCallJson } from '../../prompts.js';
   import { fmt, studio } from '../../state.svelte.js';
   import { getTauri } from '../../tauriBridge.js';
   import CategoryBlock from '../CategoryBlock.svelte';
@@ -17,12 +25,19 @@
   let dlPct = $state(0);
   let dlStatus = $state('');
 
-  // AI clips quick state
+  // AI clips & self-training state
   let aiCount = $state(6);
   let aiMax = $state(120);
+  let aiFocus = $state('');
   let aiBusy = $state(false);
   let aiStatus = $state('');
   let aiClips = $state([]);
+  let rejectMenuId = $state(null);
+  let trainer = $state(getTrainerSummary(loadTrainerProfile()));
+
+  function refreshTrainer() {
+    trainer = getTrainerSummary(loadTrainerProfile());
+  }
 
   async function browseLocalVideo() {
     const T = getTauri();
@@ -56,7 +71,7 @@
       studio.meta = { link: dlUrl.trim(), title: outPath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') };
       await loadVideoPath(outPath);
     } catch (e) {
-      dlStatus = '❌ ' + (e?.message || e);
+      dlStatus = 'Error: ' + (e?.message || e);
     } finally {
       unlisten?.();
       dlBusy = false;
@@ -71,19 +86,78 @@
     }
     aiBusy = true;
     aiClips = [];
+    rejectMenuId = null;
     try {
-      const sorted = [...studio.subs].sort((a, b) => a.s - b.s);
-      const transcript = sorted.map((x) => `[${fmt(x.s)}–${fmt(x.e)}] ${x.orig ?? x.t}`).join('\n');
-      aiStatus = 'Analyzing transcript for complete standalone clips…';
-      const sec = await aiCallJson(
-        studio.API,
-        `Select up to ${aiCount} standalone short clips (max ${aiMax}s) that never cut mid-thought. Return JSON {"clips":[{"title":"...","start_seconds":0.0,"end_seconds":45.0,"summary":"...","quality_score":88}]}.\n\nTRANSCRIPT:\n${transcript}`,
-        'You are an expert short-form video editor. Return JSON only.'
-      );
-      aiClips = (sec.clips || []).filter((c) => +c.end_seconds > +c.start_seconds);
-      aiStatus = `Found ${aiClips.length} standalone clips.`;
+      const res = await findSmartClips({
+        subs: studio.subs,
+        totalDur: studio.dur || 0,
+        apiCfg: studio.API,
+        count: aiCount,
+        maxSec: aiMax,
+        extraPrompt: aiFocus.trim(),
+        onProgress: (m) => (aiStatus = m),
+      });
+      aiClips = res.clips || [];
+      refreshTrainer();
+      aiStatus = `Found ${aiClips.length} boundary-snapped clips (${trainer.ruleCount} learned rules applied).`;
     } catch (e) {
-      aiStatus = '❌ ' + (e?.message || e);
+      aiStatus = 'Error: ' + (e?.message || e);
+    } finally {
+      aiBusy = false;
+    }
+  }
+
+  function applyAiClip(c) {
+    studio.trimS = +c.start_seconds;
+    studio.trimE = +c.end_seconds;
+    studio.activeAiClip = { ...c };
+    studio.seek(+c.start_seconds);
+    studio.toast('Clip loaded — manual trims or exports teach the AI!');
+  }
+
+  function markClipFeedback(c, action, reason = '') {
+    recordClipFeedback(c, action, { reason });
+    c.feedback = action;
+    rejectMenuId = null;
+    refreshTrainer();
+    studio.toast(action === 'approve' ? 'Approved! AI learned from this clip.' : 'Feedback saved — AI will avoid this pattern.');
+  }
+
+  function saveCurrentTrimAsExample() {
+    if (!(studio.trimE > studio.trimS)) return studio.toast('Set a valid trim range on the timeline first.');
+    if (studio.activeAiClip) {
+      recordTrimAdjustment(studio.activeAiClip, studio.trimS, studio.trimE, studio.subs);
+      studio.activeAiClip = { ...studio.activeAiClip, start_seconds: studio.trimS, end_seconds: studio.trimE };
+    } else {
+      recordClipFeedback(
+        {
+          id: `manual_${Math.round(studio.trimS * 10)}_${Math.round(studio.trimE * 10)}`,
+          title: studio.projectName?.trim() || 'Manual Good Clip',
+          start_seconds: studio.trimS,
+          end_seconds: studio.trimE,
+          quality_score: 95,
+        },
+        'approve',
+        { cues: studio.subs.map((x) => ({ s: +x.s, e: +x.e, text: String(x.orig ?? x.t ?? '') })) }
+      );
+    }
+    refreshTrainer();
+    studio.toast('Timeline range saved to AI training memory!');
+  }
+
+  async function trainAiCoachNow() {
+    if (!studio.API.key && studio.API.prov !== 'ollama') {
+      studio.apiModalOpen = true;
+      return;
+    }
+    aiBusy = true;
+    try {
+      await runSelfTrainingReflection(studio.API, (m) => (aiStatus = m));
+      refreshTrainer();
+      aiStatus = `Self-training complete (${trainer.ruleCount} active rules, ${trainer.daysTrained || 1} day(s)).`;
+      studio.toast('AI Clip Coach updated its rules!');
+    } catch (e) {
+      aiStatus = 'Training error: ' + (e?.message || e);
     } finally {
       aiBusy = false;
     }
@@ -148,37 +222,100 @@
 {:else if subTab === 'assets'}
   <AssetsPanel />
 {:else}
-  <CategoryBlock title="AI Clip Finder" icon="sparkles" open={true}>
+  <CategoryBlock title="AI Clip Finder & Self-Trainer" icon="sparkles" open={true}>
+    <div class="sub-card" style="margin-bottom:8px">
+      <div class="rt" style="justify-content:space-between;margin-bottom:4px">
+        <span style="font-weight:700;font-size:11px">AI Coach Memory</span>
+        <span class="badge mono">{trainer.daysTrained || 0}d · {trainer.ruleCount} rules</span>
+      </div>
+      <div class="hint" style="margin-bottom:6px">
+        Sweet spot ~{trainer.preferredDurSec}s
+        {#if trainer.approvalRate !== null} · {trainer.approvalRate}% kept{/if}
+        {#if trainer.pendingSignals > 0} · {trainer.pendingSignals} new signals{/if}
+      </div>
+      <div class="bar" style="gap:4px">
+        <button type="button" class="xs" style="flex:1" disabled={aiBusy} onclick={saveCurrentTrimAsExample} title="Save current timeline trim range as a positive training example">
+          + Save Current Trim
+        </button>
+        <button
+          type="button"
+          class="xs pri"
+          disabled={aiBusy || trainer.approved + trainer.rejected + trainer.exported + trainer.trimCorrected === 0}
+          onclick={trainAiCoachNow}
+          title="Distill your approvals, rejections, and trim adjustments into updated rules"
+        >
+          Train Now
+        </button>
+      </div>
+    </div>
+
     <div class="sg">
       <label>Max clips<input type="number" min="1" max="25" bind:value={aiCount} /></label>
       <label>Max sec<input type="number" min="15" max="300" bind:value={aiMax} /></label>
     </div>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--t2);margin-top:6px">
+      Topic / Hook Focus (optional)
+      <input type="text" placeholder="e.g. stories, strong emotional advice, debates…" bind:value={aiFocus} />
+    </label>
     <div class="bar" style="margin-top:8px">
-      <button type="button" class="pri sm" style="flex:1" disabled={aiBusy} onclick={findViralClips}>Find Best Clips</button>
-      <button type="button" class="sm" onclick={() => (studio.apiModalOpen = true)}>API Key</button>
+      <button type="button" class="pri sm" style="flex:1" disabled={aiBusy} onclick={findViralClips}>
+        <Icon name="sparkles" size={13} />
+        {aiBusy ? 'Analyzing…' : 'Find Smart Clips'}
+      </button>
+      <button type="button" class="sm" onclick={() => (studio.nav = 'ai')} title="Open full AI Clips & Trainer Manager">Studio</button>
+      <button type="button" class="sm" onclick={() => (studio.apiModalOpen = true)}>API</button>
     </div>
     {#if aiStatus}
-      <div class="hint">{aiStatus}</div>
+      <div class="hint" style="margin-top:6px">{aiStatus}</div>
     {/if}
+
     {#each aiClips as c}
-      <div class="sub-card">
-        <div class="rt" style="justify-content:space-between">
-          <b>{c.title}</b>
+      <div class="sub-card" style="margin-top:8px">
+        <div class="rt" style="justify-content:space-between;gap:6px">
+          <b style="flex:1">{c.title}</b>
           <span class="badge pri mono">{Math.round(c.end_seconds - c.start_seconds)}s</span>
+          <span class="badge mono">{c.quality_score ?? 85}</span>
         </div>
-        <div class="hint" style="margin:3px 0 6px">{fmt(+c.start_seconds)} – {fmt(+c.end_seconds)}</div>
-        <button
-          type="button"
-          class="xs pri"
-          onclick={() => {
-            studio.trimS = +c.start_seconds;
-            studio.trimE = +c.end_seconds;
-            studio.seek(+c.start_seconds);
-            studio.toast('Trim range loaded');
-          }}
-        >
-          Apply Range to Timeline
-        </button>
+        <div class="hint mono" style="margin:3px 0">
+          {fmt(+c.start_seconds)} – {fmt(+c.end_seconds)} · {c.hook_grade || 'Hook'} · {c.ending_grade || 'End'}
+        </div>
+        {#if c.opening_text}
+          <div class="hint" style="margin:2px 0;color:var(--t1)">“{c.opening_text.slice(0, 78)}{c.opening_text.length > 78 ? '…' : ''}”</div>
+        {/if}
+        {#if c.critic_note}
+          <div class="hint" style="margin:2px 0 6px">{c.critic_note}</div>
+        {/if}
+        <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
+          <button type="button" class="xs pri" style="flex:1" onclick={() => applyAiClip(c)}>
+            Apply Range
+          </button>
+          <button
+            type="button"
+            class="xs"
+            class:pri={c.feedback === 'approve'}
+            onclick={() => markClipFeedback(c, 'approve')}
+            title="Approve clip (teaches AI to find more like this)"
+          >
+            <Icon name="check" size={12} />
+          </button>
+          <button
+            type="button"
+            class="xs"
+            onclick={() => (rejectMenuId = rejectMenuId === c.id ? null : c.id)}
+            title="Reject clip (tell AI what went wrong)"
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+        {#if rejectMenuId === c.id}
+          <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
+            {#each REJECT_REASONS as rr}
+              <button type="button" class="xs" onclick={() => markClipFeedback(c, 'reject', rr.id)}>
+                {rr.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/each}
   </CategoryBlock>

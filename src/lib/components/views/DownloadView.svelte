@@ -49,7 +49,7 @@
       downloads = [{ path: outPath, name: outPath.split(/[\\/]/).pop() }, ...downloads];
     } catch (e) {
       status = 'Failed';
-      log += '\n❌ ' + (e?.message || e);
+      log += '\nError: ' + (e?.message || e);
     } finally {
       busy = false;
     }

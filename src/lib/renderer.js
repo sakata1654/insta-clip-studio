@@ -1,3 +1,4 @@
+import { recordTrimAdjustment } from './aiClipTrainer.js';
 import { AMIRI } from './constants.js';
 import { cl, fts, hex2, rgb2hex, rgba, studio } from './state.svelte.js';
 import { getTauri } from './tauriBridge.js';
@@ -236,16 +237,16 @@ function paint(X, LW, sc, o, p, x, y, lhk = 1.2, alpha = 1, hl = null) {
   return { x: cl(x - W / 2 - padX, 0, LW), y: Math.max(0, y - H / 2 - padY), w: Math.min(LW, W + padX * 2), h: H + padY * 2 };
 }
 
-function getSrc() {
-  if (studio.fg.mode === 'image' && studio.fgImg) {
-    return { el: studio.fgImg, w: studio.fgImg.naturalWidth, h: studio.fgImg.naturalHeight };
+function getSrc(S = studio) {
+  if (S.fg.mode === 'image' && S.fgImg) {
+    return { el: S.fgImg, w: S.fgImg.naturalWidth, h: S.fgImg.naturalHeight };
   }
-  const V = studio.V;
+  const V = S.V;
   return { el: V, w: V?.videoWidth || 0, h: V?.videoHeight || 0 };
 }
 
-export function vg(w, h, z) {
-  const s = getSrc();
+export function vg(w, h, z, S = studio) {
+  const s = getSrc(S);
   if (!s.w || !s.h) return [w * z, h * z];
   const vr = s.w / s.h;
   let dw;
@@ -260,10 +261,10 @@ export function vg(w, h, z) {
   return [dw * z, dh * z];
 }
 
-function vid(c, x, y, w, h, z, px, py) {
-  const s = getSrc();
+function vid(c, x, y, w, h, z, px, py, S = studio) {
+  const s = getSrc(S);
   if (!s.el || !s.w) return;
-  const [dw, dh] = vg(w, h, z);
+  const [dw, dh] = vg(w, h, z, S);
   const mx = (dw - w) / 2;
   const my = (dh - h) / 2;
   c.drawImage(
@@ -281,12 +282,12 @@ const blendHex = (a, b, f) => {
   return rgb2hex(p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f, p[2] + (q[2] - p[2]) * f);
 };
 
-export function themeAt(t) {
-  const T = studio.themes;
+export function themeAt(t, S = studio) {
+  const T = S.themes;
   if (!T.length) return TH_DEF;
-  const base = T[Math.min(studio.theme, T.length - 1)];
-  if (!studio.shift || T.length < 2) return base;
-  const p = Math.min(0.999, Math.max(0, (t - studio.trimS) / Math.max(1, studio.trimE - studio.trimS))) * (T.length - 1);
+  const base = T[Math.min(S.theme, T.length - 1)];
+  if (!S.shift || T.length < 2) return base;
+  const p = Math.min(0.999, Math.max(0, (t - S.trimS) / Math.max(1, S.trimE - S.trimS))) * (T.length - 1);
   const i = Math.floor(p);
   const f = p - i;
   return {
@@ -320,8 +321,8 @@ export async function initFD() {
   return fdPromise;
 }
 
-function detectFace() {
-  const V = studio.V;
+function detectFace(S = studio) {
+  const V = S.V;
   if (!FD || !V?.videoWidth || V.readyState < 2) return null;
   try {
     const d = FD.detectForVideo(V, performance.now()).detections;
@@ -335,8 +336,8 @@ function detectFace() {
   }
 }
 
-function aim(f, w, h, z) {
-  const [dw, dh] = vg(w, h, z);
+function aim(f, w, h, z, S = studio) {
+  const [dw, dh] = vg(w, h, z, S);
   const ox = w * 0.5 - (w - dw) / 2 - f.u * dw;
   const oy = h * 0.45 - (h - dh) / 2 - f.v * dh;
   const mx = (dw - w) / 2 / w * 100;
@@ -344,21 +345,21 @@ function aim(f, w, h, z) {
   return [cl((ox / w) * 100, -mx, mx), cl((oy / h) * 100, -my, my)];
 }
 
-export function autoCenter(force) {
-  const s = studio.shots[Math.max(0, studio.shotIdx)];
-  if (!s || studio.fg.mode === 'image') return;
-  if (!force && (s.set || studio.cam !== 'auto')) return;
-  const f = detectFace();
+export function autoCenter(force, S = studio) {
+  const s = S.shots[Math.max(0, S.shotIdx)];
+  if (!s || S.fg.mode === 'image') return;
+  if (!force && (s.set || S.cam !== 'auto')) return;
+  const f = detectFace(S);
   if (!f) return;
-  const [px, py] = aim(f, studio.frW || studio.LW, studio.frH || studio.LH, studio.fx.zoom / 100);
-  studio.fx.px = px;
-  studio.fx.py = py;
-  studio.saveShot();
-  studio.inv();
+  const [px, py] = aim(f, S.frW || S.LW, S.frH || S.LH, S.fx.zoom / 100, S);
+  S.fx.px = px;
+  S.fx.py = py;
+  S.saveShot?.();
+  S.inv?.();
 }
 
-function hdSpecs(X, ms, ss) {
-  const secs = studio.hd.text.split('|').map((s) => s.trim()).filter(Boolean);
+function hdSpecs(X, ms, ss, S = studio) {
+  const secs = S.hd.text.split('|').map((s) => s.trim()).filter(Boolean);
   const out = [];
   secs.forEach((t, i) => {
     let size = i ? ss : ms;
@@ -366,8 +367,8 @@ function hdSpecs(X, ms, ss) {
     let r;
     const txt = clean(t);
     for (;;) {
-      font = `700 ${size}px ${studio.hd.font || 'Arial'}, ${AMIRI}`;
-      r = measureLines(X, txt, font, studio.LW - 160);
+      font = `700 ${size}px ${S.hd.font || 'Arial'}, ${AMIRI}`;
+      r = measureLines(X, txt, font, S.LW - 160);
       if (r.L.length <= 3 || size - 4 < 34) break;
       size -= 4;
     }
@@ -376,33 +377,33 @@ function hdSpecs(X, ms, ss) {
   return { out, H: out.reduce((a, b) => a + b.lh, 0) };
 }
 
-export function hdPlace() {
-  const h = studio.hd;
-  if (!h.on || !h.auto || !h.text.trim() || !studio.C) return;
-  const X = studio.C.getContext('2d', { alpha: false });
+export function hdPlace(S = studio) {
+  const h = S.hd;
+  if (!h.on || !h.auto || !h.text.trim() || !S.C) return;
+  const X = S.C.getContext('2d', { alpha: false });
   const k = h.scale / 100;
-  const W = studio.LW;
-  const H = studio.LH;
+  const W = S.LW;
+  const H = S.LH;
   h.ay = 0.6;
   h.am = h.s1 * k;
   h.as = h.s2 * k;
-  const f = detectFace();
+  const f = detectFace(S);
   if (!f) return;
   const b = f.box;
-  const s = getSrc();
-  const fb = studio.frBox || { x: 0, y: 0, w: W, h: H };
-  const [dw, dh] = vg(fb.w, fb.h, studio.fx.zoom / 100);
+  const s = getSrc(S);
+  const fb = S.frBox || { x: 0, y: 0, w: W, h: H };
+  const [dw, dh] = vg(fb.w, fb.h, S.fx.zoom / 100, S);
   const my = (dh - fb.h) / 2;
-  const oy = fb.y + (fb.h - dh) / 2 + Math.max(-my, Math.min(my, (fb.h * studio.fx.py) / 100));
+  const oy = fb.y + (fb.h - dh) / 2 + Math.max(-my, Math.min(my, (fb.h * S.fx.py) / 100));
   const ft = oy + (b.originY * dh) / s.h;
   const fbm = oy + ((b.originY + b.height) * dh) / s.h;
   const top = 60;
-  const bot = H - (studio.wm.on ? 150 : 60);
+  const bot = H - (S.wm.on ? 150 : 60);
   const mg = 45;
   let last = null;
   for (let m = h.s1 * k; m >= 34; m -= 8) {
     const ss = Math.max(34, h.s2 * k - (h.s1 * k - m));
-    const { H: rq } = hdSpecs(X, m, ss);
+    const { H: rq } = hdSpecs(X, m, ss, S);
     last = { m, ss, rq };
     if (bot - (fbm + mg) >= rq) {
       h.ay = (fbm + mg + rq / 2) / H;
@@ -424,19 +425,19 @@ export function hdPlace() {
   }
 }
 
-function shotSync(t) {
+function shotSync(t, S = studio) {
   let i = 0;
-  for (let k = 0; k < studio.shots.length; k++) if (studio.shots[k].t <= t + 0.001) i = k;
-  if (i === studio.shotIdx) return;
-  studio.shotIdx = i;
-  const s = studio.shots[i];
+  for (let k = 0; k < S.shots.length; k++) if (S.shots[k].t <= t + 0.001) i = k;
+  if (i === S.shotIdx) return;
+  S.shotIdx = i;
+  const s = S.shots[i];
   if (s) {
-    studio.fx.px = s.px;
-    studio.fx.py = s.py;
-    studio.fx.zoom = s.zoom;
+    S.fx.px = s.px;
+    S.fx.py = s.py;
+    S.fx.zoom = s.zoom;
   }
-  if (studio.cam === 'auto' && s && !s.set) autoCenter();
-  hdPlace();
+  if (S.cam === 'auto' && s && !s.set) autoCenter(false, S);
+  hdPlace(S);
 }
 
 function partFor(a, t) {
@@ -454,8 +455,8 @@ function partFor(a, t) {
   return [ps[ps.length - 1], c];
 }
 
-function drawDual(X, W, LH, sc, txt, anchor, translation = '') {
-  const d = studio.du;
+function drawDual(X, W, LH, sc, txt, anchor, translation = '', S = studio) {
+  const d = S.du;
   const style = d.style || 'classic';
   const indMode = d.dualMode === 'independent';
   const parchment = !indMode && style === 'parchment';
@@ -531,10 +532,10 @@ function drawDual(X, W, LH, sc, txt, anchor, translation = '') {
   const py = cl(minTop - padY, 0, LH - Math.max(ph, maxBot - minTop + padY * 2));
   const boxH = Math.max(ph, maxBot - minTop + padY * 2);
 
-  studio.duSourceBox = t
+  S.duSourceBox = t
     ? { x: cl(srcX - r.W / 2 - sPadX, 0, W), y: cl(srcY - srcH / 2 - sPadY, 0, LH), w: Math.min(W, r.W + sPadX * 2), h: srcH + sPadY * 2 }
     : null;
-  studio.duTransBox = trans
+  S.duTransBox = trans
     ? { x: cl(trX - tr.W / 2 - tPadX, 0, W), y: cl(trY - trH / 2 - tPadY, 0, LH), w: Math.min(W, tr.W + tPadX * 2), h: trH + tPadY * 2 }
     : null;
 
@@ -687,35 +688,37 @@ function drawDual(X, W, LH, sc, txt, anchor, translation = '') {
   X.restore();
 }
 
-export function renderCanvasFrame(C, sc, dragPreview = null) {
+export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC = bc, blurX = bx) {
   if (!C) return;
-  ensureScratch();
+  if (S === studio) ensureScratch();
+  blurC ||= bc;
+  blurX ||= bx;
   const X = C.getContext('2d', { alpha: false });
-  const W = studio.LW;
-  const H = studio.LH;
-  const V = studio.V;
+  const W = S.LW;
+  const H = S.LH;
+  const V = S.V;
   const t = V ? V.currentTime : 0;
-  const F = studio.fr;
-  const f = studio.fx;
-  const th = themeAt(t);
-  const studioMode = studio.mode === 'studio';
-  const tt = Math.max(0, t - studio.trimS);
-  const sr = getSrc();
-  const ok = sr.w && ((studio.fg.mode === 'image' && studio.fgImg) || (V && V.readyState > 1));
+  const F = S.fr;
+  const f = S.fx;
+  const th = themeAt(t, S);
+  const studioMode = S.mode === 'studio';
+  const tt = Math.max(0, t - S.trimS);
+  const sr = getSrc(S);
+  const ok = sr.w && ((S.fg.mode === 'image' && S.fgImg) || (V && V.readyState > 1));
 
-  shotSync(t);
+  shotSync(t, S);
   X.setTransform(sc, 0, 0, sc, 0, 0);
   X.fillStyle = F.on && F.bgm === 'solid' ? F.bgc : '#000';
   X.fillRect(0, 0, W, H);
 
-  studio.frBox = null;
-  studio.frW = W;
-  studio.frH = H;
-  studio.hdBox = null;
+  S.frBox = null;
+  S.frW = W;
+  S.frH = H;
+  S.hdBox = null;
 
-  const prog = Math.min(1, tt / Math.max(1, studio.trimE - studio.trimS));
-  const kb = studio.fg.mode === 'image' && studio.fg.kb ? prog * prog * (3 - 2 * prog) : 0;
-  const z = (f.zoom / 100) * (1 + (studio.fg.kbz / 100) * kb);
+  const prog = Math.min(1, tt / Math.max(1, S.trimE - S.trimS));
+  const kb = S.fg.mode === 'image' && S.fg.kb ? prog * prog * (3 - 2 * prog) : 0;
+  const z = (f.zoom / 100) * (1 + (S.fg.kbz / 100) * kb);
   const px = f.px + kb * 3;
   const py = f.py + kb * 1.2;
 
@@ -733,16 +736,16 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     }
     x0 = (W * F.x) / 100 - fw / 2;
     y0 = (H * F.y) / 100 - fh / 2;
-    studio.frBox = { x: x0, y: y0, w: fw, h: fh };
-    studio.frW = fw;
-    studio.frH = fh;
+    S.frBox = { x: x0, y: y0, w: fw, h: fh };
+    S.frW = fw;
+    S.frH = fh;
   }
 
-  if (ok && studio.cam === 'track' && studio.fg.mode !== 'image' && FD && !studio.sample && performance.now() - lastFace > 90) {
+  if (ok && S.cam === 'track' && S.fg.mode !== 'image' && FD && !S.sample && performance.now() - lastFace > 90) {
     lastFace = performance.now();
-    const fc = detectFace();
+    const fc = detectFace(S);
     if (fc) {
-      const [ax, ay] = aim(fc, studio.frW, studio.frH, f.zoom / 100);
+      const [ax, ay] = aim(fc, S.frW, S.frH, f.zoom / 100, S);
       f.px += (ax - f.px) * 0.5;
       f.py += (ay - f.py) * 0.5;
     }
@@ -752,33 +755,33 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     const fl = f.b !== 100 || f.c !== 100 || f.s !== 100 || f.blur > 0 ? `brightness(${f.b}%) contrast(${f.c}%) saturate(${f.s}%) blur(${f.blur * sc}px)` : 'none';
     if (!F.on) {
       X.filter = fl;
-      vid(X, 0, 0, W, H, z, px, py);
+      vid(X, 0, 0, W, H, z, px, py, S);
       X.filter = 'none';
     } else {
-      if (F.bgm === 'blur' && bx) {
-        const k = bc.width / W;
-        bx.filter = `blur(${F.bgb * k}px)`;
-        vid(bx, -4, -4, bc.width + 8, bc.height + 8, 1.25, 0, 0);
-        bx.filter = 'none';
+      if (F.bgm === 'blur' && blurX) {
+        const k = blurC.width / W;
+        blurX.filter = `blur(${F.bgb * k}px)`;
+        vid(blurX, -4, -4, blurC.width + 8, blurC.height + 8, 1.25, 0, 0, S);
+        blurX.filter = 'none';
         if (F.leak) {
-          const img = studio.fg.mode === 'image';
-          const cx = bc.width * (0.5 + Math.sin(tt * 0.6) * 0.4);
-          const cy = bc.height * (0.5 + Math.cos(tt * 0.4) * 0.3);
-          const r = bc.width * (img ? 0.6 : 0.44);
-          bx.save();
-          bx.globalCompositeOperation = 'lighter';
-          bx.globalAlpha = img ? 0.65 : 0.45;
-          const g = bx.createRadialGradient(cx, cy, 0, cx, cy, r);
+          const img = S.fg.mode === 'image';
+          const cx = blurC.width * (0.5 + Math.sin(tt * 0.6) * 0.4);
+          const cy = blurC.height * (0.5 + Math.cos(tt * 0.4) * 0.3);
+          const r = blurC.width * (img ? 0.6 : 0.44);
+          blurX.save();
+          blurX.globalCompositeOperation = 'lighter';
+          blurX.globalAlpha = img ? 0.65 : 0.45;
+          const g = blurX.createRadialGradient(cx, cy, 0, cx, cy, r);
           g.addColorStop(0, th.accent);
           g.addColorStop(1, rgba(th.accent, 0));
-          bx.fillStyle = g;
-          bx.beginPath();
-          bx.arc(cx, cy, r, 0, 7);
-          bx.fill();
-          bx.restore();
+          blurX.fillStyle = g;
+          blurX.beginPath();
+          blurX.arc(cx, cy, r, 0, 7);
+          blurX.fill();
+          blurX.restore();
         }
         X.imageSmoothingQuality = 'high';
-        X.drawImage(bc, 0, 0, W, H);
+        X.drawImage(blurC, 0, 0, W, H);
         if (F.dim > 0) {
           X.fillStyle = `rgba(0,0,0,${F.dim / 100})`;
           X.fillRect(0, 0, W, H);
@@ -822,7 +825,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       rr(X, x0, y0, fw, fh, F.r);
       X.clip();
       X.filter = fl;
-      vid(X, x0, y0, fw, fh, z, px, py);
+      vid(X, x0, y0, fw, fh, z, px, py, S);
       X.restore();
       if (F.bw > 0) {
         X.save();
@@ -835,7 +838,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         }
         rr(X, x0, y0, fw, fh, F.r);
         X.lineWidth = F.bw;
-        X.strokeStyle = F.bc;
+        X.strokeStyle = F.blurC;
         X.stroke();
         X.restore();
       }
@@ -852,10 +855,10 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
   }
 
   const drawGrain = () => {
-    if (!studio.grain || !GRN.length) return;
+    if (!S.grain || !GRN.length) return;
     X.save();
     X.globalCompositeOperation = 'overlay';
-    X.globalAlpha = Math.min(1, studio.grain / 18);
+    X.globalAlpha = Math.min(1, S.grain / 18);
     X.translate((Math.random() * 256) | 0, (Math.random() * 256) | 0);
     X.fillStyle = X.createPattern(GRN[gi++ % 4], 'repeat');
     X.fillRect(-256, -256, W + 512, H + 512);
@@ -863,7 +866,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
   };
 
   if (!F.on) drawGrain();
-  const G = studio.gr;
+  const G = S.gr;
   if (G.on && G.max > 0) {
     const hex = G.mode === 'custom' ? (G.color || '#000000') : G.mode === 'theme' ? th.bg : '#000000';
     const gy0 = (H * G.start) / 100;
@@ -910,16 +913,16 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     X.restore();
   }
 
-  if (studio.ovlC) X.drawImage(studio.ovlC, 0, 0, W, H);
+  if (S.ovlC) X.drawImage(S.ovlC, 0, 0, W, H);
 
   // Media overlays (videos, banners, logos, PiP, split-screen)
-  for (const o of studio.mediaOverlays || []) {
+  for (const o of S.mediaOverlays || []) {
     o._box = null;
-    const rec = studio.mediaNodes.get(o.id);
+    const rec = S.mediaNodes.get(o.id);
     const el = rec?.el;
     if (!el) continue;
     const start = Number(o.start) || 0;
-    const end = Number.isFinite(+o.end) ? +o.end : studio.dur;
+    const end = Number.isFinite(+o.end) ? +o.end : S.dur;
     if (t < start || t > end) {
       if (el.tagName === 'VIDEO' && !el.paused) el.pause();
       continue;
@@ -929,7 +932,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       const rawTarget = Math.max(0, t - start);
       const target = o.loop !== false && elDur > 0 ? rawTarget % elDur : rawTarget;
       el.muted = o.mute !== false;
-      el.playbackRate = studio.speed || 1;
+      el.playbackRate = S.speed || 1;
       if (elDur > 0 && rawTarget > elDur && o.loop === false) {
         if (!el.paused) el.pause();
         continue;
@@ -940,7 +943,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         } catch {}
       }
       if (V && !V.paused && el.paused) el.play().catch(() => {});
-      else if (V && V.paused && !studio.exporting && !el.paused) el.pause();
+      else if (V && V.paused && !S.exporting && !el.paused) el.pause();
       if (el.readyState < 2) continue;
     }
 
@@ -1000,15 +1003,15 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     }
   }
 
-  const cardB = studio.frBox ? studio.frBox.y + studio.frBox.h : 1120;
-  const sp = studio.spk;
-  const hasB = !!(sp.on && (sp.text?.trim() || sp.avatarSrc));
-  studio.spkBox = null;
+  const cardB = S.frBox ? S.frBox.y + S.frBox.h : H * 0.56;
+  const sp = S.spk;
+  const hasB = !!sp.on;
+  S.spkBox = null;
   let spkReservedH = 0;
 
   if (hasB) {
     const spScale = cl(Number(sp.scale ?? 100), 50, 180) / 100;
-    const rawTxt = sp.text?.trim() ? sp.text : 'Speaker Name | Title or Surah';
+    const rawTxt = sp.text?.trim() ? sp.text : 'Speaker Name | Title or Role';
     const ls = rawTxt.split('|').map((s) => clean(s.trim()));
     const s1 = Math.round((Number(sp.s1) || 46) * spScale);
     const s2 = Math.round((Number(sp.s2) || 32) * spScale);
@@ -1024,7 +1027,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     const w2 = ls[1] ? X.measureText(ls[1]).width : 0;
     const txtW = Math.max(w1, w2);
     const txtH = ls.length > 1 ? s1 + s2 * 1.38 : s1 * 1.15;
-    const bw = Math.min(W * 0.94, Math.round(txtW + padX * 2 + avSize + avGap));
+    const bw = Math.min(W * 0.94, Math.max(220, Math.round(txtW + padX * 2 + avSize + avGap)));
     const bh = Math.max(avSize + padY, Math.round(txtH + padY * 2));
     const brad = Math.min(bh / 2, Math.max(0, Number(sp.radius ?? 99) * spScale));
     spkReservedH = bh;
@@ -1046,12 +1049,21 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       by0 = cl((H * cl(Number(sp.y ?? 66), 5, 95)) / 100 - bh / 2, 16, H - bh - 16);
     } else {
       bx0 = (W - bw) / 2;
-      by0 = (studioMode && studio.frBox ? cardB : H * 0.62) + (Number(sp.gap) ?? 95);
+      const anchorY = studioMode && S.frBox ? cardB : H * 0.62;
+      by0 = cl(anchorY + (Number(sp.gap) ?? 95), 16, H - bh - 16);
     }
 
     const introMode = sp.intro === true || sp.intro === 1 ? 'slideLeft' : sp.intro === false || sp.intro === 0 ? 'none' : sp.intro || 'slideLeft';
     const ease5 = (p) => 1 - Math.pow(1 - p, 5);
-    const animProg = studio.sample || introMode === 'none' ? 1 : tt < 0.35 ? 0 : tt < 1.35 ? ease5((tt - 0.35) / 1.0) : 1;
+    const isPlayingOrExporting = S.exporting || (V && !V.paused);
+    const animProg =
+      !isPlayingOrExporting || S.sample || introMode === 'none'
+        ? 1
+        : tt < 0.12
+          ? 0
+          : tt < 0.95
+            ? ease5((tt - 0.12) / 0.83)
+            : 1;
     let bxDraw = bx0;
     let byDraw = by0;
     let bAlpha = 1;
@@ -1061,15 +1073,15 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       bAlpha = animProg;
     } else if (introMode === 'fade') bAlpha = animProg;
 
-    studio.spkBox = { x: bxDraw, y: byDraw, w: bw, h: bh };
+    S.spkBox = { x: bxDraw, y: byDraw, w: bw, h: bh };
 
     const bStyle = sp.style || 'glass';
-    const useTh = sp.useThemeColors !== false;
+    const useTh = sp.useThemeColors === true;
     const bgHex = useTh ? th.banner : sp.bgColor || '#0f1420';
     const nameCol = useTh ? th.accent : sp.nameColor || '#ffffff';
-    const roleCol = useTh ? rgba(th.accent, 0.78) : sp.roleColor || '#cbd5e1';
-    const accCol = useTh ? th.accent : sp.accentColor || '#6366f1';
-    const bgAlpha = cl(Number(sp.bgOpacity ?? 74), 0, 100) / 100;
+    const roleCol = useTh ? rgba(th.accent, 0.82) : sp.roleColor || '#cbd5e1';
+    const accCol = useTh ? th.accent : sp.accentColor || '#4f8cff';
+    const bgAlpha = cl(Number(sp.bgOpacity ?? 82), 0, 100) / 100;
 
     if (animProg > 0.01) {
       X.save();
@@ -1081,19 +1093,26 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       }
 
       if (bStyle === 'glass') {
+        rr(X, bxDraw, byDraw, bw, bh, brad);
+        X.fillStyle = rgba(bgHex, Math.max(0.45, bgAlpha * 0.88));
+        X.fill();
+        X.shadowColor = 'transparent';
+        X.shadowBlur = 0;
+        // Subtle top glass sheen
         X.save();
         rr(X, bxDraw, byDraw, bw, bh, brad);
         X.clip();
-        X.filter = `blur(${(Number(sp.blur) || 14) * sc}px)`;
-        X.drawImage(C, bxDraw * sc, byDraw * sc, bw * sc, bh * sc, bxDraw, byDraw, bw, bh);
-        X.filter = 'none';
-        X.fillStyle = rgba(bgHex, bgAlpha * 0.85);
+        const sg = X.createLinearGradient(bxDraw, byDraw, bxDraw, byDraw + bh);
+        sg.addColorStop(0, 'rgba(255,255,255,0.12)');
+        sg.addColorStop(0.5, 'rgba(255,255,255,0.02)');
+        sg.addColorStop(1, 'rgba(0,0,0,0.08)');
+        X.fillStyle = sg;
         X.fillRect(bxDraw, byDraw, bw, bh);
         X.restore();
       } else if (bStyle === 'solid') {
         const g = X.createLinearGradient(bxDraw, byDraw, bxDraw + bw, byDraw + bh);
         g.addColorStop(0, rgba(bgHex, bgAlpha));
-        g.addColorStop(1, rgba(accCol, Math.max(0.45, bgAlpha * 0.8)));
+        g.addColorStop(1, rgba(accCol, Math.max(0.45, bgAlpha * 0.85)));
         X.fillStyle = g;
         rr(X, bxDraw, byDraw, bw, bh, brad);
         X.fill();
@@ -1134,6 +1153,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         txtStartX = ax + avSize + avGap;
       }
 
+      const maxTxtW = Math.max(40, bw - (txtStartX - bxDraw) - padX * 0.6);
       X.textAlign = 'left';
       X.textBaseline = 'top';
       X.direction = isRtl(ls[0]) ? 'rtl' : 'ltr';
@@ -1142,11 +1162,11 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       const txtY0 = byDraw + (bh - txtH) / 2;
       X.fillStyle = nameCol;
       X.font = `${sp.weight || 700} ${s1}px ${sp.font || AMIRI}`;
-      X.fillText(ls[0], drawTxtX, txtY0);
+      X.fillText(ls[0], drawTxtX, txtY0, maxTxtW);
       if (ls[1]) {
         X.fillStyle = roleCol;
         X.font = `500 ${s2}px ${sp.font || AMIRI}`;
-        X.fillText(ls[1], drawTxtX, txtY0 + Math.round(s1 * 1.18));
+        X.fillText(ls[1], drawTxtX, txtY0 + Math.round(s1 * 1.18), maxTxtW);
       }
 
       if (sp.prog) {
@@ -1168,7 +1188,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       }
 
       const waveMode = sp.wave === true || sp.wave === 1 ? 'bars' : sp.wave === false || sp.wave === 0 ? 'none' : sp.wave || 'bars';
-      const speaking = studio.sample || studio.subs.some((s) => t >= s.s && t <= s.e);
+      const speaking = S.sample || S.subs.some((s) => t >= s.s && t <= s.e);
       if (waveMode !== 'none') {
         const vx = bxDraw + padX;
         const vy = byDraw - Math.round(18 * spScale);
@@ -1201,12 +1221,12 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
   if (F.on) drawGrain();
 
   // Broadcast News Channel Lower-Third + Scrolling Ticker Banner
-  studio.bnBox = null;
-  const bn = studio.bn;
+  S.bnBox = null;
+  const bn = S.bn;
   if (bn?.on && (bn.text?.trim() || bn.ticker?.trim() || bn.label?.trim())) {
     const sT = Number(bn.startT) || 0;
     const eT = Number(bn.endT) || 0;
-    const inWin = studio.sample || ((sT <= 0 || t >= sT) && (eT <= 0 || t <= eT));
+    const inWin = S.sample || ((sT <= 0 || t >= sT) && (eT <= 0 || t <= eT));
     if (inWin) {
       const bw = cl((W * cl(Number(bn.w ?? 94), 30, 100)) / 100, 180, W);
       const hasTicker = !!(bn.ticker && bn.ticker.trim());
@@ -1215,7 +1235,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       const totalH = mainH + tickH;
       const cx = (W * cl(Number(bn.x ?? 50), 5, 95)) / 100;
       const cy = (H * cl(Number(bn.y ?? 88), 5, 96)) / 100;
-      const bx = cl(cx - bw / 2, 0, W - bw);
+      const blurX = cl(cx - bw / 2, 0, W - bw);
       const by = cl(cy - totalH / 2, 0, H - totalH);
       const rad = Math.min(totalH / 2, Math.max(0, Number(bn.radius ?? 8)));
       const bStyle = bn.style || 'broadcast';
@@ -1223,7 +1243,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       const accW = bStyle === 'minimal' ? 4 : Math.max(0, Number(bn.accentW ?? 8));
       const op = cl(Number(bn.bgOpacity ?? 92), 10, 100) / 100;
 
-      studio.bnBox = { x: bx, y: by, w: bw, h: totalH };
+      S.bnBox = { x: blurX, y: by, w: bw, h: totalH };
       X.save();
       if (bn.shadow > 0) {
         X.shadowColor = 'rgba(0,0,0,0.58)';
@@ -1232,7 +1252,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       }
 
       // Main card container
-      rr(X, bx, by, bw, totalH, rad);
+      rr(X, blurX, by, bw, totalH, rad);
       if (bStyle === 'glass') {
         X.fillStyle = rgba(bn.bgColor || '#0f172a', op * 0.78);
       } else if (bStyle === 'alert') {
@@ -1254,29 +1274,29 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
 
       // Clip interior for stripe, headline, badge, ticker
       X.save();
-      rr(X, bx, by, bw, totalH, rad);
+      rr(X, blurX, by, bw, totalH, rad);
       X.clip();
 
       // Subtle glossy top edge highlight on broadcast/glass
       if (bStyle === 'broadcast' || bStyle === 'glass') {
-        const tg = X.createLinearGradient(bx, by, bx, by + mainH);
+        const tg = X.createLinearGradient(blurX, by, blurX, by + mainH);
         tg.addColorStop(0, 'rgba(255,255,255,0.09)');
         tg.addColorStop(1, 'rgba(255,255,255,0)');
         X.fillStyle = tg;
-        X.fillRect(bx, by, bw, mainH);
+        X.fillRect(blurX, by, bw, mainH);
       }
 
       // Left accent bar (or top line in minimal)
       if (accW > 0) {
         X.fillStyle = bn.accentColor || '#2563eb';
         if (bStyle === 'minimal') {
-          X.fillRect(bx, by, bw, 3);
+          X.fillRect(blurX, by, bw, 3);
         } else {
-          X.fillRect(bx, by, accW, totalH);
+          X.fillRect(blurX, by, accW, totalH);
         }
       }
 
-      let curX = bx + accW + 18;
+      let curX = blurX + accW + 18;
       // Optional BREAKING / LIVE badge
       if (bn.labelOn && bn.label?.trim()) {
         const lbl = bn.label.trim().toUpperCase();
@@ -1302,7 +1322,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         X.font = `800 ${Math.max(18, (Number(bn.labelSize) || 22))}px ${fnt}`;
         const lgW = X.measureText(lg).width + 24;
         const lgH = Math.max(28, (Number(bn.labelSize) || 22) + 14);
-        const lgX = bx + bw - lgW - 14;
+        const lgX = blurX + bw - lgW - 14;
         const lgY = by + (mainH - lgH) / 2;
         rr(X, lgX, lgY, lgW, lgH, Math.min(6, rad));
         X.fillStyle = 'rgba(255,255,255,0.12)';
@@ -1315,7 +1335,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       }
 
       // Headline + optional kicker
-      const headMaxW = Math.max(60, bx + bw - rightReserve - curX);
+      const headMaxW = Math.max(60, blurX + bw - rightReserve - curX);
       const headTxt = clean(bn.text?.trim() || '');
       const kickerTxt = clean(bn.kicker?.trim() || '');
       if (kickerTxt) {
@@ -1333,7 +1353,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         X.textAlign = 'left';
         X.textBaseline = 'middle';
         X.direction = isRtl(headTxt) ? 'rtl' : 'ltr';
-        const drawX = X.direction === 'rtl' ? bx + bw - rightReserve : curX;
+        const drawX = X.direction === 'rtl' ? blurX + bw - rightReserve : curX;
         const textY = kickerTxt ? by + mainH * 0.68 : by + mainH / 2;
         X.fillText(headTxt, drawX, textY, headMaxW);
       }
@@ -1342,9 +1362,9 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       if (hasTicker) {
         const ty = by + mainH;
         X.fillStyle = bn.tickerBg || '#0f2347';
-        X.fillRect(bx + (bStyle === 'minimal' ? 0 : accW), ty, bw - (bStyle === 'minimal' ? 0 : accW), tickH);
+        X.fillRect(blurX + (bStyle === 'minimal' ? 0 : accW), ty, bw - (bStyle === 'minimal' ? 0 : accW), tickH);
         X.fillStyle = 'rgba(255,255,255,0.14)';
-        X.fillRect(bx, ty, bw, 1);
+        X.fillRect(blurX, ty, bw, 1);
 
         const ts = Number(bn.tickerSize) || 24;
         X.font = `600 ${ts}px ${fnt}`;
@@ -1356,8 +1376,8 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         const segW = Math.max(120, X.measureText(seg).width);
         const speed = Math.max(15, Number(bn.tickerSpeed) || 85);
         const shiftX = (t * speed) % segW;
-        const startX = bx + accW - shiftX;
-        for (let drawX = startX; drawX < bx + bw; drawX += segW) {
+        const startX = blurX + accW - shiftX;
+        for (let drawX = startX; drawX < blurX + bw; drawX += segW) {
           X.fillText(seg, drawX, ty + tickH / 2 + 1);
         }
       }
@@ -1367,8 +1387,8 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     }
   }
 
-  if (studio.wm.on && studio.wm.text) {
-    const w = studio.wm;
+  if (S.wm.on && S.wm.text) {
+    const w = S.wm;
     X.save();
     X.globalAlpha = cl(Number(w.opacity ?? 92), 5, 100) / 100;
     X.font = `700 ${w.size}px ${w.font || AMIRI}`;
@@ -1415,11 +1435,11 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     X.restore();
   }
 
-  if (studio.hd.on && studio.hd.text.trim()) {
-    const h = studio.hd;
+  if (S.hd.on && S.hd.text.trim()) {
+    const h = S.hd;
     const k = h.scale / 100;
     const auto = h.auto && h.ay != null;
-    const { out, H: tH } = hdSpecs(X, auto ? h.am : h.s1 * k, auto ? h.as : h.s2 * k);
+    const { out, H: tH } = hdSpecs(X, auto ? h.am : h.s1 * k, auto ? h.as : h.s2 * k, S);
     const maxLineW = Math.max(120, ...out.map((s) => ((X.font = s.font), X.measureText(s.l).width)));
     const hx = (W * cl(Number(h.x ?? 50), 10, 90)) / 100;
     const hy0 = H * (auto ? h.ay : h.y / 100) - tH / 2;
@@ -1464,18 +1484,18 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       hy += s.lh;
     }
     X.direction = 'ltr';
-    studio.hdBox = { x: hx - maxLineW / 2, y: hy0, w: maxLineW, h: tH };
+    S.hdBox = { x: hx - maxLineW / 2, y: hy0, w: maxLineW, h: tH };
   }
 
-  studio.subBox = null;
-  studio.duSourceBox = null;
-  studio.duTransBox = null;
-  studio.act = null;
+  S.subBox = null;
+  S.duSourceBox = null;
+  S.duTransBox = null;
+  S.act = null;
 
-  const foundSub = studio.subs.find((s) => t >= s.s && t <= s.e);
-  if (foundSub) studio.act = foundSub.id;
+  const foundSub = S.subs.find((s) => t >= s.s && t <= s.e);
+  if (foundSub) S.act = foundSub.id;
   const sampleObj =
-    !studio.exporting && studio.sampleSub
+    !S.exporting && S.sampleSub
       ? {
           id: -99,
           s: t - 1,
@@ -1487,8 +1507,8 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       : null;
   const a = foundSub || sampleObj;
 
-  if (a && !studio.sample) {
-    const st = { ...studio.st, ...a.st };
+  if (a && !S.sample) {
+    const st = { ...S.st, ...a.st };
     const [part, cs] = partFor(a, t);
     const col = a.st && a.st.color !== undefined ? a.st.color : st.acc ? th.accent : st.color;
     const marginPct = cl(Number(st.marginX ?? 6), 0, 25) / 100;
@@ -1498,14 +1518,14 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
     const p = prep(X, st, part, maxSubW, st.fit && maxLines > 0 ? { max: maxLines, min: minFit, step: 3 } : null);
     const padY = st.bga > 0 ? Math.max(0, Number(st.padY ?? 14)) : 0;
     const Hh = p.L.length * p.size * st.lh + padY * 2;
-    const dualPairedActive = studio.du.on && studio.du.dualMode !== 'split' && studio.du.showTranslation !== false && !!a.tr;
+    const dualPairedActive = S.du.on && S.du.dualMode !== 'split' && S.du.showTranslation !== false && !!a.tr;
 
     if (!dualPairedActive) {
       let cy;
       if (!st.auto || (a.st && a.st.y !== undefined)) cy = (st.y / 100) * H;
       else {
         const safeY = Math.max(8, Number(st.marginY ?? 24));
-        const bot = H - (studio.wm.on ? 140 : 36) - safeY;
+        const bot = H - (S.wm.on ? 140 : 36) - safeY;
         const top = studioMode && F.on ? cardB + (sp.pos === 'underCard' ? (Number(sp.gap) ?? 95) + spkReservedH : 0) + safeY : H * 0.76;
         const av = Math.max(10, bot - top);
         cy = Math.max(top + Hh / 2, Math.min(top + av / 2, bot - Hh / 2));
@@ -1533,31 +1553,56 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         for (let q = 0; q < a.words.length; q++) if (a.words[q].s <= t) ix = q;
         hl = { idx: ix, color: st.hlc };
       }
-      studio.subBox = paint(X, W, sc, { ...st, color: col }, p, W / 2, cy, st.lh, al, hl);
+      S.subBox = paint(X, W, sc, { ...st, color: col }, p, W / 2, cy, st.lh, al, hl);
       X.restore();
     }
 
-    if (studio.du.on) {
+    if (S.du.on) {
       const source = a.orig !== undefined ? a.orig : a.t;
       const translated = a.tr || '';
-      const anchor = studioMode && F.on ? { cy: cardB + sp.gap / 2 } : { bottom: studio.subBox ? studio.subBox.y - 12 : H * 0.72 };
-      drawDual(X, W, H, sc, source, anchor, translated);
+      const anchor = studioMode && F.on ? { cy: cardB + sp.gap / 2 } : { bottom: S.subBox ? S.subBox.y - 12 : H * 0.72 };
+      drawDual(X, W, H, sc, source, anchor, translated, S);
     }
   }
 
-  for (const o of studio.texts) {
+  for (const o of S.texts) {
     if (t >= o.s && t < o.e) {
-      const stObj = { ...studio.st, size: o.size, color: o.color, sw: o.sw ?? 0, bga: 0, font: o.font || studio.st.font, upper: 0 };
-      o.box = paint(X, W, sc, stObj, prep(X, stObj, o.t, W * 0.9), (o.x / 100) * W, (o.y / 100) * H);
+      const stObj = {
+        ...S.st,
+        acc: 0,
+        size: o.size ?? 76,
+        color: o.color || '#ffffff',
+        stroke: o.stroke || '#000000',
+        sw: o.sw ?? 6,
+        bg: o.bg || '#000000',
+        bga: o.bga ?? 0,
+        boxR: o.boxR ?? 14,
+        padX: o.padX ?? 24,
+        padY: o.padY ?? 14,
+        font: o.font || S.st.font,
+        bold: o.bold !== undefined ? (o.bold ? 1 : 0) : 1,
+        upper: o.upper ? 1 : 0,
+        align: o.align || 'center',
+        shadow: o.shadow !== undefined ? (o.shadow ? 1 : 0) : 1,
+        shc: o.shc || '#000000',
+        sha: o.sha ?? 85,
+        shb: o.shb ?? 10,
+        shx: o.shx ?? 2,
+        shy: o.shy ?? 3,
+        w: o.w ?? 88,
+        anim: o.anim || 'fade',
+        hl: 0,
+      };
+      o.box = paint(X, W, sc, stObj, prep(X, stObj, o.t, (W * stObj.w) / 100), (o.x / 100) * W, (o.y / 100) * H);
     } else {
       o.box = null;
     }
   }
 
-  if (!studio.exporting) {
-    if (studio.guides) {
+  if (!S.exporting) {
+    if (S.guides) {
       X.fillStyle = 'rgba(255,60,60,.14)';
-      const gm = studio.guideMode || 'reels';
+      const gm = S.guideMode || 'reels';
       if (gm === 'tiktok') {
         X.fillRect(0, 0, W, H * 0.13);
         X.fillRect(W * 0.82, H * 0.35, W * 0.18, H * 0.45);
@@ -1599,8 +1644,8 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
       X.restore();
     };
     if (dragPreview?.du) {
-      const pxPos = dragPreview.du === 'source' ? studio.du.sourceX : studio.du.transX;
-      const pyPos = dragPreview.du === 'source' ? studio.du.sourceY : studio.du.transY;
+      const pxPos = dragPreview.du === 'source' ? S.du.sourceX : S.du.transX;
+      const pyPos = dragPreview.du === 'source' ? S.du.sourceY : S.du.transY;
       X.save();
       X.strokeStyle = 'rgba(124,92,255,.9)';
       X.lineWidth = 2;
@@ -1617,22 +1662,22 @@ export function renderCanvasFrame(C, sc, dragPreview = null) {
         X.stroke();
       }
       X.restore();
-      drawHudBox(dragPreview.du === 'source' ? studio.duSourceBox : studio.duTransBox, dragPreview.du === 'source' ? 'Source · Dragging' : 'Translation · Dragging', '#7c5cff');
-    } else if (studio.hoverLayer === 'duSource') drawHudBox(studio.duSourceBox, 'Source · Drag / Scroll size', '#7c5cff');
-    else if (studio.hoverLayer === 'duTrans') drawHudBox(studio.duTransBox, 'Translation · Drag / Scroll size', '#3b82f6');
-    else if (studio.hoverLayer === 'spk') drawHudBox(studio.spkBox, 'Speaker Banner · Drag', '#22c55e');
-    else if (studio.hoverLayer === 'bn') drawHudBox(studio.bnBox, 'News Banner · Drag Y/H', '#ef4444');
-    else if (studio.hoverLayer === 'overlay') {
-      const ov = (studio.mediaOverlays || []).find((q) => q.id === studio.selectedOverlayId);
+      drawHudBox(dragPreview.du === 'source' ? S.duSourceBox : S.duTransBox, dragPreview.du === 'source' ? 'Source · Dragging' : 'Translation · Dragging', '#7c5cff');
+    } else if (S.hoverLayer === 'duSource') drawHudBox(S.duSourceBox, 'Source · Drag / Scroll size', '#7c5cff');
+    else if (S.hoverLayer === 'duTrans') drawHudBox(S.duTransBox, 'Translation · Drag / Scroll size', '#3b82f6');
+    else if (S.hoverLayer === 'spk') drawHudBox(S.spkBox, 'Speaker Banner · Drag', '#22c55e');
+    else if (S.hoverLayer === 'bn') drawHudBox(S.bnBox, 'News Banner · Drag Y/H', '#ef4444');
+    else if (S.hoverLayer === 'overlay') {
+      const ov = (S.mediaOverlays || []).find((q) => q.id === S.selectedOverlayId);
       if (ov?._box) drawHudBox(ov._box, `${ov.name} · Drag / Scroll scale`, '#06b6d4');
-    } else if (studio.hoverLayer === 'sub') drawHudBox(studio.subBox, 'Main Subtitle · Drag / Scroll size', '#ff3d81');
-    else if (studio.hoverLayer === 'text') {
-      const tx = studio.texts.find((q) => q.id === studio.sel);
+    } else if (S.hoverLayer === 'sub') drawHudBox(S.subBox, 'Main Subtitle · Drag / Scroll size', '#ff3d81');
+    else if (S.hoverLayer === 'text') {
+      const tx = S.texts.find((q) => q.id === S.sel);
       if (tx?.box) drawHudBox(tx.box, 'Text Overlay · Drag', '#a855f7');
     }
 
-    const fb = studio.frBox;
-    if (fb && (studio.hov || dragPreview)) {
+    const fb = S.frBox;
+    if (fb && (S.hov || dragPreview)) {
       X.save();
       X.setLineDash([14, 10]);
       X.lineWidth = 3;
@@ -1754,11 +1799,101 @@ export async function generateVideoThemes() {
 
 export async function exportAll(exportOptions = {}) {
   const V = studio.V;
-  const C = studio.C;
-  if (!V?.src || studio.exporting) return studio.toast('Open a video first');
+  if (!V?.src) return studio.toast('Open a video first');
+  if (!(Number.isFinite(studio.trimS) && Number.isFinite(studio.trimE) && studio.trimE > studio.trimS)) {
+    return studio.toast('Set a valid clip start and end first.');
+  }
+
+  // Implicit AI Clip Self-Training: learn when user exports (or fine-tunes) an AI-suggested range
+  if (studio.activeAiClip && !exportOptions.skipTrainerFeedback) {
+    try {
+      recordTrimAdjustment(studio.activeAiClip, studio.trimS, studio.trimE, studio.subs);
+    } catch {}
+  }
+
   const T = getTauri();
-  const desk = !!(T?.core && studio.file);
-  const oldRate = V.playbackRate;
+  const desk = !!(T?.core && !T.__isDevBridge && studio.file);
+  const jobId = 'exp_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const jobTitle = exportOptions.filename || studio.projectName?.trim() || studio.meta?.title || 'Clip Export';
+
+  // Deep-clone immutable render state snapshot so user can immediately switch/edit another project
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const revokedUrls = [];
+  const srcFile = studio.file;
+  const srcVidUrl = srcFile ? URL.createObjectURL(srcFile) : V.src;
+  if (srcFile) revokedUrls.push(srcVidUrl);
+
+  const jobV = document.createElement('video');
+  jobV.muted = true;
+  jobV.volume = 0;
+  jobV.playsInline = true;
+  jobV.preload = 'auto';
+  jobV.crossOrigin = 'anonymous';
+  jobV.src = srcVidUrl;
+
+  const jobC = document.createElement('canvas');
+  jobC.width = studio.LW;
+  jobC.height = studio.LH;
+  jobC.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0.001;pointer-events:none;';
+  document.body.appendChild(jobC);
+
+  const jobBc = document.createElement('canvas');
+  jobBc.width = Math.max(32, Math.round(studio.LW / 10));
+  jobBc.height = Math.round((jobBc.width * studio.LH) / studio.LW);
+  const jobBx = jobBc.getContext('2d');
+
+  const jobCtx = {
+    LW: studio.LW,
+    LH: studio.LH,
+    V: jobV,
+    C: jobC,
+    mode: studio.mode,
+    aspect: studio.aspect,
+    trimS: studio.trimS,
+    trimE: studio.trimE,
+    dur: studio.dur,
+    speed: studio.speed || 1,
+    grain: studio.grain || 0,
+    themes: clone(studio.themes),
+    theme: studio.theme,
+    shift: studio.shift,
+    cam: studio.cam,
+    shots: clone(studio.shots),
+    shotIdx: -1,
+    fr: clone(studio.fr),
+    fx: clone(studio.fx),
+    gr: clone(studio.gr),
+    spk: clone(studio.spk),
+    bn: clone(studio.bn),
+    wm: clone(studio.wm),
+    hd: clone(studio.hd),
+    du: clone(studio.du),
+    st: clone(studio.st),
+    subs: clone(studio.subs),
+    texts: clone(studio.texts),
+    mediaOverlays: clone(studio.mediaOverlays || []),
+    fg: clone(studio.fg),
+    fgImg: studio.fgImg,
+    ovlC: studio.ovlC,
+    mediaNodes: new Map(),
+    sample: 0,
+    sampleSub: 0,
+    exporting: true,
+    hov: 0,
+    guides: 0,
+    hoverLayer: null,
+    saveShot() {},
+    inv() {},
+  };
+
+  // Snapshot audio, export & archive settings upfront before user switches projects
+  const audSnap = clone(studio.aud);
+  const exSnap = clone(studio.ex);
+  const projJsonSnap = studio.projJson();
+  const assetLibSnap = [...studio.assetLibrary];
+
+  let cancelled = false;
+  let rafId = 0;
   let rec = null;
   let cs = null;
   let vtmp = null;
@@ -1767,45 +1902,95 @@ export async function exportAll(exportOptions = {}) {
   let writeError = null;
   let chunkCount = 0;
   let recordError = null;
-  let successful = false;
+  let finishLoop = null;
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const seekWait = (t) =>
-    new Promise((r) => {
-      if (Math.abs(V.currentTime - t) < 0.001) return r();
-      V.addEventListener('seeked', r, { once: true });
-      V.currentTime = t;
+  studio.addExportJob({
+    id: jobId,
+    name: jobTitle,
+    aspect: jobCtx.aspect,
+    pct: 0,
+    label: 'Preparing background export…',
+    status: 'Initializing offscreen renderer',
+    done: false,
+    error: false,
+    outPath: '',
+    cancel: () => {
+      cancelled = true;
+      try { jobV.pause(); } catch {}
+      try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {}
+      finishLoop?.(new Error('Export cancelled'));
+    },
+  });
+  studio.toast(`Exporting "${jobTitle}" in background — you can keep editing or switch projects.`);
+
+  const setJob = (pct, label, extra = {}) =>
+    studio.updateExportJob(jobId, { pct, label, ...extra });
+
+  const seekWait = (el, t) =>
+    new Promise((resolve) => {
+      if (Math.abs((el.currentTime || 0) - t) < 0.01) return resolve();
+      const onSeek = () => {
+        clearTimeout(tm);
+        resolve();
+      };
+      const tm = setTimeout(onSeek, 2000);
+      el.addEventListener('seeked', onSeek, { once: true });
+      try { el.currentTime = t; } catch { resolve(); }
     });
 
   try {
-    if (!(Number.isFinite(studio.trimS) && Number.isFinite(studio.trimE) && studio.trimE > studio.trimS)) {
-      throw new Error('Set a valid clip start and end first.');
-    }
-    studio.exporting = true;
-    studio.exportStatus = '';
-    studio.exportPct = 0;
-    studio.exportLabel = 'Preparing render…';
-    C.width = studio.LW;
-    C.height = studio.LH;
-    resizeScratch(studio.LW, studio.LH);
-    studio.sample = 0;
-    await sleep(80);
+    // Capture disk paths upfront BEFORE letting user reset/switch projects
+    const inputPath = desk ? await ensureSourcePath() : '';
+    const jobDir = desk ? await studio.projDir() : null;
+    if (desk) vtmp = await T.path.join(jobDir, `render_video_${jobId}.webm`);
 
-    if (desk) {
-      const dir = await studio.projDir();
-      vtmp = await T.path.join(dir, 'render_video.webm');
+    // Wait for hidden offscreen video metadata
+    await new Promise((resolve, reject) => {
+      if (jobV.readyState >= 2) return resolve();
+      jobV.onloadeddata = () => resolve();
+      jobV.onerror = () => reject(new Error('Could not initialize background video decoder'));
+    });
+    if (cancelled) throw new Error('Export cancelled');
+
+    // Clone active overlay nodes so switching projects never breaks running overlays
+    for (const o of jobCtx.mediaOverlays) {
+      const liveRec = studio.mediaNodes.get(o.id);
+      if (!liveRec?.el) continue;
+      if (o.type === 'image') {
+        jobCtx.mediaNodes.set(o.id, { el: liveRec.el });
+      } else {
+        const asset = assetLibSnap.find((a) => a.id === o.assetId || a.path === o.path);
+        const ovUrl = asset?.file ? URL.createObjectURL(asset.file) : liveRec.el.src;
+        if (asset?.file) revokedUrls.push(ovUrl);
+        const ovEl = document.createElement('video');
+        ovEl.muted = true;
+        ovEl.volume = 0;
+        ovEl.playsInline = true;
+        ovEl.loop = o.loop !== false;
+        ovEl.playbackRate = jobCtx.speed;
+        ovEl.crossOrigin = 'anonymous';
+        ovEl.src = ovUrl;
+        await new Promise((res) => {
+          if (ovEl.readyState >= 2) return res();
+          ovEl.onloadeddata = () => res();
+          ovEl.onerror = () => res();
+        });
+        jobCtx.mediaNodes.set(o.id, { el: ovEl });
+      }
     }
-    cs = C.captureStream(30);
+
+    cs = jobC.captureStream(30);
     if (!desk) {
       try {
-        (V.captureStream ? V.captureStream() : V.mozCaptureStream()).getAudioTracks().forEach((a) => cs.addTrack(a));
+        (jobV.captureStream ? jobV.captureStream() : jobV.mozCaptureStream()).getAudioTracks().forEach((a) => cs.addTrack(a));
       } catch {}
     }
+
     const mt = (desk
       ? ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
       : ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
     ).find((m) => MediaRecorder.isTypeSupported(m));
-    if (!mt) throw new Error('This browser does not support compatible video recording.');
+    if (!mt) throw new Error('Compatible MediaRecorder codec not supported.');
 
     rec = new MediaRecorder(cs, { mimeType: mt, videoBitsPerSecond: 16e6 });
     rec.addEventListener('error', (e) => (recordError = e.error || new Error('Recorder error')), { once: true });
@@ -1830,25 +2015,27 @@ export async function exportAll(exportOptions = {}) {
         });
     });
 
-    V.pause();
-    V.playbackRate = studio.speed || 1;
-    await seekWait(studio.trimS);
-    // Prime any active MP4 video overlays so frame 0 at trimS is ready
-    for (const o of studio.mediaOverlays || []) {
-      const el = studio.mediaNodes.get(o.id)?.el;
-      if (el?.tagName === 'VIDEO') {
-        el.playbackRate = studio.speed || 1;
-        el.loop = o.loop !== false;
+    jobV.playbackRate = jobCtx.speed;
+    await seekWait(jobV, jobCtx.trimS);
+    for (const o of jobCtx.mediaOverlays) {
+      const ovEl = jobCtx.mediaNodes.get(o.id)?.el;
+      if (ovEl?.tagName === 'VIDEO') {
         const start = Number(o.start) || 0;
-        const end = Number.isFinite(+o.end) ? +o.end : studio.dur;
-        if (studio.trimS >= start && studio.trimS <= end) {
-          const elDur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
-          const raw = Math.max(0, studio.trimS - start);
-          const target = o.loop !== false && elDur > 0 ? raw % elDur : raw;
-          try { el.currentTime = target; } catch {}
+        const end = Number.isFinite(+o.end) ? +o.end : jobCtx.dur;
+        if (jobCtx.trimS >= start && jobCtx.trimS <= end) {
+          const elDur = Number.isFinite(ovEl.duration) && ovEl.duration > 0 ? ovEl.duration : 0;
+          const raw = Math.max(0, jobCtx.trimS - start);
+          await seekWait(ovEl, o.loop !== false && elDur > 0 ? raw % elDur : raw);
         }
       }
     }
+
+    const drawLoop = () => {
+      if (cancelled) return;
+      renderCanvasFrame(jobC, 1, null, jobCtx, jobBc, jobBx);
+      rafId = requestAnimationFrame(drawLoop);
+    };
+    drawLoop();
 
     const stopped = () =>
       new Promise((resolve, reject) => {
@@ -1856,23 +2043,17 @@ export async function exportAll(exportOptions = {}) {
         let fin = false;
         const tm = setTimeout(() => !fin && ((fin = true), reject(new Error('Recorder close timeout'))), 15000);
         rec.addEventListener('stop', () => !fin && ((fin = true), clearTimeout(tm), resolve()), { once: true });
-        try {
-          rec.stop();
-        } catch (err) {
-          if (!fin) {
-            fin = true;
-            clearTimeout(tm);
-            reject(err);
-          }
+        try { rec.stop(); } catch (err) {
+          if (!fin) { fin = true; clearTimeout(tm); reject(err); }
         }
       });
 
     rec.start(1000);
-    studio.exportLabel = 'Rendering video · 0%';
-    await V.play();
+    setJob(1, 'Rendering background frames · 0%');
+    await jobV.play();
 
-    const spd = Math.max(0.25, Math.abs(V.playbackRate) || 1);
-    const expectedMs = ((studio.trimE - studio.trimS) / spd) * 1000;
+    const spd = Math.max(0.25, Math.abs(jobV.playbackRate) || 1);
+    const expectedMs = ((jobCtx.trimE - jobCtx.trimS) / spd) * 1000;
     await new Promise((resolve, reject) => {
       let settled = false;
       const fin = (err) => {
@@ -1880,80 +2061,97 @@ export async function exportAll(exportOptions = {}) {
         settled = true;
         clearInterval(iv);
         clearTimeout(to);
-        V.removeEventListener('ended', onEnd);
+        jobV.removeEventListener('ended', onEnd);
         err ? reject(err) : resolve();
       };
+      finishLoop = fin;
       const onEnd = () => fin();
       const iv = setInterval(() => {
-        const p = Math.min(100, Math.max(0, Math.round(((V.currentTime - studio.trimS) / (studio.trimE - studio.trimS)) * 100)));
-        studio.exportPct = Math.round(p * 0.35);
-        studio.exportLabel = 'Rendering video · ' + p + '%';
-        if (V.currentTime >= studio.trimE - 0.015 || V.ended) fin();
-      }, 120);
-      const to = setTimeout(() => fin(new Error('Playback timeout before end timestamp')), Math.max(30000, expectedMs + 30000));
-      V.addEventListener('ended', onEnd, { once: true });
+        const p = Math.min(100, Math.max(0, Math.round(((jobV.currentTime - jobCtx.trimS) / (jobCtx.trimE - jobCtx.trimS)) * 100)));
+        setJob(desk ? Math.round(p * 0.4) : p, `Rendering in background · ${p}%`);
+        if (jobV.currentTime >= jobCtx.trimE - 0.015 || jobV.ended) fin();
+      }, 150);
+      const to = setTimeout(() => fin(new Error('Background render timeout')), Math.max(30000, expectedMs + 30000));
+      jobV.addEventListener('ended', onEnd, { once: true });
     });
 
-    V.pause();
+    if (cancelled) throw new Error('Export cancelled');
+    cancelAnimationFrame(rafId);
+    jobV.pause();
+    for (const r of jobCtx.mediaNodes.values()) {
+      if (r.el?.tagName === 'VIDEO') try { r.el.pause(); } catch {}
+    }
+
     await stopped();
     await writeQueue;
     if (recordError) throw recordError;
     if (writeError) throw new Error('Write error: ' + writeError);
-    if (desk && chunkCount === 0) throw new Error('Recorder produced zero video chunks.');
 
-    studio.exportPct = 36;
-    studio.exportLabel = 'Preparing FFmpeg audio mux…';
-    const input = await ensureSourcePath();
-    const hex = studio.mode === 'simple' ? 'SIMPLE' : themeAt(studio.trimS).accent.replace('#', '').toUpperCase();
-    const safeName = String(exportOptions.filename || `clip_${hex}`).replace(/[^a-zA-Z0-9._-]+/g, '_');
-    const dir = await studio.projDir();
-    const out = await T.path.join(dir, `${safeName}.mp4`);
+    const safeName = String(exportOptions.filename || jobTitle || 'clip').replace(/[^a-zA-Z0-9._-]+/g, '_');
+
+    if (!desk) {
+      const outBlob = new Blob(recordedChunks, { type: mt });
+      const ext = mt.includes('mp4') ? '.mp4' : '.webm';
+      await saveBlob(outBlob, safeName + ext);
+      setJob(100, 'Export complete', { done: true, status: 'Downloaded: ' + safeName + ext });
+      studio.toast('Background export finished: ' + safeName + ext);
+      return;
+    }
+
+    if (chunkCount === 0) throw new Error('Recorder produced zero video chunks.');
+    setJob(45, 'Encoding MP4 & mastering audio (FFmpeg)…');
+    const hex = jobCtx.mode === 'simple' ? 'SIMPLE' : themeAt(jobCtx.trimS, jobCtx).accent.replace('#', '').toUpperCase();
+    const out = await T.path.join(jobDir, `${safeName}_${hex}.mp4`);
 
     await T.core.invoke('finalize_export', {
       video: vtmp,
-      source: input,
-      audioSource: studio.aud.track || '',
-      start: studio.trimS,
-      dur: studio.trimE - studio.trimS,
-      speed: studio.speed || 1,
-      enhance: !!studio.aud.enh,
-      pre: studio.aud.pre || '',
-      vocals: !!studio.aud.vocals,
-      demucs: studio.aud.model,
-      crf: studio.ex.crf,
+      source: inputPath,
+      audioSource: audSnap.track || '',
+      start: jobCtx.trimS,
+      dur: jobCtx.trimE - jobCtx.trimS,
+      speed: jobCtx.speed || 1,
+      enhance: !!audSnap.enh,
+      pre: audSnap.pre || '',
+      vocals: !!audSnap.vocals,
+      demucs: audSnap.model,
+      crf: exSnap.crf,
       out,
     });
 
-    studio.exportPct = 95;
-    studio.exportLabel = 'Validating exported MP4…';
+    setJob(95, 'Validating exported MP4…');
     const expDur = await T.core.invoke('media_duration', { path: out });
     if (!Number.isFinite(expDur) || expDur <= 0) throw new Error('Export validation failed: MP4 unreadable.');
 
-    if (studio.ex.arch) {
-      await writeBlobToPath(await T.path.join(dir, 'subtitles.srt'), new Blob([studio.subs.map((s, i) => `${i + 1}\n${fts(s.s)} --> ${fts(s.e)}\n${s.t}\n`).join('\n')]));
-      await writeBlobToPath(await T.path.join(dir, 'project.json'), new Blob([JSON.stringify(studio.projJson(), null, 1)]));
+    if (exSnap.arch) {
+      await writeBlobToPath(await T.path.join(jobDir, 'subtitles.srt'), new Blob([jobCtx.subs.map((s, i) => `${i + 1}\n${fts(s.s)} --> ${fts(s.e)}\n${s.t}\n`).join('\n')]));
+      await writeBlobToPath(await T.path.join(jobDir, 'project.json'), new Blob([JSON.stringify(projJsonSnap, null, 1)]));
     }
 
-    studio.exportPct = 100;
-    studio.exportLabel = 'Export complete · 100%';
-    studio.exportStatus = 'Saved: ' + out;
-    studio.toast('Export finished: ' + out);
+    setJob(100, 'Export complete', { done: true, outPath: out, status: 'Saved: ' + out });
+    studio.toast('Export complete: ' + out.split(/[\\/]/).pop());
     T.core.invoke('reveal', { path: out }).catch(() => {});
-    successful = true;
   } catch (e) {
     const msg = String(e?.message || e);
-    studio.exportStatus = '❌ ' + msg;
-    studio.exportPct = 0;
-    studio.exportLabel = 'Export failed';
-    studio.toast('Export failed: ' + msg);
+    const isCancel = msg === 'Export cancelled';
+    setJob(0, isCancel ? 'Cancelled' : 'Export failed', {
+      done: true,
+      error: !isCancel,
+      status: isCancel ? 'Cancelled by user' : 'Error: ' + msg,
+    });
+    if (!isCancel) studio.toast('Background export failed: ' + msg);
   } finally {
+    cancelAnimationFrame(rafId);
     if (cs) try { cs.getTracks().forEach((t) => t.stop()); } catch {}
-    V.playbackRate = oldRate;
-    studio.exporting = false;
-    C.width = Math.round(studio.LW * studio.previewScale);
-    C.height = Math.round(studio.LH * studio.previewScale);
-    studio.inv();
-    if (successful) studio.exportPct = 100;
+    try { jobV.pause(); jobV.removeAttribute('src'); jobV.load(); } catch {}
+    for (const r of jobCtx.mediaNodes.values()) {
+      if (r.el?.tagName === 'VIDEO') {
+        try { r.el.pause(); r.el.removeAttribute('src'); r.el.load(); } catch {}
+      }
+    }
+    try { jobC.remove(); } catch {}
+    for (const u of revokedUrls) {
+      try { URL.revokeObjectURL(u); } catch {}
+    }
   }
 }
 

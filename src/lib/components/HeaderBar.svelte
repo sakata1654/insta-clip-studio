@@ -1,5 +1,4 @@
 <script>
-  import { openVideoFile } from '../mediaHelpers.js';
   import { exportAll, saveBlob } from '../renderer.js';
   import { studio } from '../state.svelte.js';
   import { isDevPreviewBridge } from '../tauriBridge.js';
@@ -7,7 +6,9 @@
 
   let { onOpenProjects = () => {}, onOpenSettings = () => {} } = $props();
   const isDev = isDevPreviewBridge();
-  let vidInput = $state(null);
+  let jobsOpen = $state(false);
+  const runningJobs = $derived(studio.exportJobs.filter((j) => !j.done));
+  const latestJob = $derived(runningJobs[0] || studio.exportJobs[0] || null);
 
   const missingReq = $derived(
     studio.env
@@ -19,7 +20,7 @@
     studio.saveProjectStore();
   }
 
-  function exportProjectJsonFile() {
+  function exportProjectJson() {
     studio.saveProjectStore({ quiet: true });
     saveBlob(
       new Blob(
@@ -40,53 +41,59 @@
       ),
       ((studio.projectName || 'project').replace(/[^a-z0-9-_]+/gi, '_')) + '.icproj.json'
     );
-    studio.toast('Exported project file (.icproj.json)');
+    studio.toast('Exported portable project (.icproj.json)');
   }
 </script>
 
-<input
-  bind:this={vidInput}
-  type="file"
-  accept="video/*,audio/*"
-  hidden
-  onchange={(e) => {
-    const f = e.currentTarget.files?.[0];
-    if (f) openVideoFile(f);
-    e.currentTarget.value = '';
-  }}
-/>
-
 <header class="top-bar">
   <div class="bar-left">
-    <div class="logo-mark">
-      <Icon name="film" size={14} />
+    <button
+      type="button"
+      class="sm ghost"
+      onclick={() => (studio.homeOpen = true)}
+      title="Back to Project Homepage"
+    >
+      <Icon name="home" size={14} />
+      <span>Home</span>
+    </button>
+
+    <div class="brand">
+      <div class="logo-mark">
+        <Icon name="film" size={13} />
+      </div>
+      <span class="app-title">InstaClip Studio</span>
+      {#if isDev}
+        <span class="env-pill">Preview</span>
+      {/if}
     </div>
-    <span class="app-title">InstaClip Studio</span>
-    {#if isDev}
-      <span class="live-pill">PREVIEW</span>
-    {/if}
+
     <span class="v-div"></span>
+
     <input
       class="proj-pill"
       bind:value={studio.projectName}
       placeholder="Untitled Project"
       aria-label="Project name"
     />
-    <span class="save-state" class:unsaved={studio.unsaved} title={studio.unsaved ? 'Unsaved edits' : 'Saved locally'}>
-      <i class="sdot"></i>{studio.unsaved ? 'Unsaved' : 'Saved'}
+    <span class="save-state" class:unsaved={studio.unsaved} title={studio.unsaved ? 'Unsaved changes (Ctrl+S)' : 'Saved to library'}>
+      <i class="sdot"></i>
+      <span>{studio.unsaved ? 'Unsaved' : 'Saved'}</span>
     </span>
-    <button type="button" class="sm ghost" onclick={onOpenProjects} title="Open Projects Library">
-      <Icon name="folder" size={13} /> Projects
+    <button type="button" class="sm ghost" onclick={onOpenProjects} title="Browse & Manage Projects">
+      <Icon name="folder" size={14} />
+      <span>Projects</span>
     </button>
   </div>
 
   <div class="bar-center">
-    <div class="mode-toggle">
+    <div class="mode-toggle" role="tablist" aria-label="Workspace view">
       <button type="button" class:on={studio.nav !== 'tr'} onclick={() => (studio.nav = 'ed')}>
-        Workspace
+        <Icon name="sliders" size={12} />
+        <span>Timeline Editor</span>
       </button>
       <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
-        Translate
+        <Icon name="languages" size={12} />
+        <span>Translation Desk</span>
       </button>
     </div>
   </div>
@@ -98,6 +105,7 @@
       disabled={studio.histIdx <= 0}
       onclick={() => studio.goHist(-1)}
       title="Undo (Ctrl+Z)"
+      aria-label="Undo"
     >
       <Icon name="undo" size={14} />
     </button>
@@ -107,31 +115,96 @@
       disabled={studio.histIdx >= studio.histLen - 1}
       onclick={() => studio.goHist(1)}
       title="Redo (Ctrl+Shift+Z)"
+      aria-label="Redo"
     >
       <Icon name="redo" size={14} />
     </button>
-    <div class="v-div"></div>
+
+    <span class="v-div"></span>
+
     <button
       type="button"
       class="sm ghost icon-btn"
-      onclick={() => studio.applyUiTheme(studio.uiTheme === 'minbar' ? 'studio' : 'minbar')}
-      title="Switch color palette"
+      onclick={() => studio.applyUiTheme(studio.uiTheme === 'light' ? 'dark' : 'light')}
+      title={studio.uiTheme === 'light' ? 'Switch to Dark Graphite theme' : 'Switch to Clean Light theme'}
+      aria-label="Toggle color theme"
     >
-      <Icon name="palette" size={14} />
+      <Icon name={studio.uiTheme === 'light' ? 'moon' : 'sun'} size={14} />
     </button>
-    <button type="button" class="sm ghost icon-btn" onclick={onOpenSettings} title="Tools, API Keys & Setup">
+
+    <button
+      type="button"
+      class="sm ghost icon-btn"
+      onclick={onOpenSettings}
+      title="Settings, AI Keys & Shortcuts"
+      aria-label="Studio Settings"
+    >
       <Icon name="settings" size={14} />
-      <span class="status-dot" style="background:{missingReq ? '#f59e0b' : '#22c55e'}"></span>
+      <span class="status-dot" style="background:{missingReq ? 'var(--accent-amber)' : 'var(--accent-green)'}"></span>
     </button>
-    <div class="v-div"></div>
-    <button type="button" class="sm ghost" onclick={saveToLibrary} title="Save to Projects Library (Ctrl+S)">
-      Save
+
+    <span class="v-div"></span>
+
+    <button type="button" class="sm" onclick={saveToLibrary} title="Save Project (Ctrl+S)">
+      <Icon name="save" size={13} />
+      <span>Save</span>
     </button>
-    <button type="button" class="sm ghost" onclick={exportProjectJsonFile} title="Export portable .icproj.json">
-      .JSON
+
+    <button type="button" class="sm ghost" onclick={exportProjectJson} title="Export portable .icproj.json">
+      <span>.JSON</span>
     </button>
-    <button type="button" class="sm pri" disabled={studio.exporting} onclick={() => exportAll()}>
-      <Icon name="upload" size={13} /> Export MP4
+
+    {#if studio.exportJobs.length}
+      <div class="jobs-wrap">
+        <button
+          type="button"
+          class="sm jobs-pill"
+          class:active={runningJobs.length > 0}
+          onclick={() => (jobsOpen = !jobsOpen)}
+          title="Background exports"
+        >
+          {#if runningJobs.length}
+            <span class="pulse-dot"></span>
+            <span>Rendering {latestJob?.pct ?? 0}%</span>
+          {:else}
+            <Icon name="check" size={12} />
+            <span>Exports ({studio.exportJobs.length})</span>
+          {/if}
+        </button>
+
+        {#if jobsOpen}
+          <div class="jobs-popover">
+            <div class="rt" style="justify-content:space-between;margin-bottom:8px">
+              <b style="font-size:12px">Background Exports</b>
+              {#if studio.exportJobs.some((j) => j.done)}
+                <button type="button" class="xs ghost" onclick={() => studio.clearFinishedJobs()}>Clear</button>
+              {/if}
+            </div>
+            {#each studio.exportJobs as j (j.id)}
+              <div class="sub-card" style="margin:6px 0;padding:8px">
+                <div class="rt" style="justify-content:space-between;gap:6px">
+                  <b style="font-size:11.8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{j.name}</b>
+                  <span class="badge" class:ok={j.done && !j.error} class:err={j.error} class:pri={!j.done}>
+                    {j.done ? (j.error ? 'Failed' : 'Saved') : `${j.pct}%`}
+                  </span>
+                </div>
+                <div class="pbar" style="margin:5px 0"><i style="width:{j.pct}%"></i></div>
+                <div class="rt" style="justify-content:space-between">
+                  <span class="hint" style="margin:0;font-size:10.5px">{j.label}</span>
+                  {#if !j.done && j.cancel}
+                    <button type="button" class="xs danger" onclick={() => j.cancel()}>Cancel</button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <button type="button" class="sm pri" onclick={() => exportAll()} title="Start background MP4 export">
+      <Icon name="upload" size={13} />
+      <span>Export MP4</span>
     </button>
   </div>
 </header>
@@ -139,15 +212,16 @@
 <style>
   .top-bar {
     grid-area: h;
-    height: 48px;
+    height: 46px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 0 14px;
+    padding: 0 12px;
     background: var(--bg-titlebar);
     border-bottom: 1px solid var(--border-color);
     z-index: 20;
+    min-width: 0;
   }
 
   .bar-left,
@@ -158,39 +232,45 @@
     min-width: 0;
   }
 
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding-left: 2px;
+  }
+
   .logo-mark {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    background: var(--grad-accent);
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
     display: grid;
     place-items: center;
-    color: #fff;
+    color: #ffffff;
     flex-shrink: 0;
   }
 
   .app-title {
-    font-weight: 700;
-    font-size: 13.5px;
-    letter-spacing: -0.025em;
+    font-weight: 650;
+    font-size: 13px;
+    letter-spacing: -0.02em;
     white-space: nowrap;
   }
 
-  .live-pill {
-    font-size: 9.5px;
-    font-weight: 700;
-    padding: 2px 7px;
+  .env-pill {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
     border-radius: 99px;
-    background: rgba(34, 197, 94, 0.12);
-    color: #4ade80;
-    border: 1px solid rgba(34, 197, 94, 0.3);
-    letter-spacing: 0.04em;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   }
 
   .v-div {
     width: 1px;
-    height: 18px;
-    background: var(--border-mid);
+    height: 16px;
+    background: var(--border-color);
     margin: 0 3px;
     flex-shrink: 0;
   }
@@ -198,7 +278,7 @@
   .proj-pill {
     background: transparent;
     border-color: transparent;
-    padding: 4px 9px;
+    padding: 4px 8px;
     width: 150px;
     font-size: 12.2px;
     font-weight: 600;
@@ -207,7 +287,7 @@
   .proj-pill:hover,
   .proj-pill:focus {
     border-color: var(--border-mid);
-    background: var(--bg-elevated);
+    background: var(--bg-input);
   }
 
   .save-state {
@@ -216,51 +296,51 @@
     gap: 5px;
     font-size: 11px;
     color: var(--text-thirdly);
-    padding: 2px 7px;
+    padding: 2px 8px;
     border-radius: 99px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
   }
   .sdot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #22c55e;
+    background: var(--accent-green);
   }
   .save-state.unsaved .sdot {
-    background: #f59e0b;
+    background: var(--accent-amber);
   }
 
   .mode-toggle {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 2px;
-    background: var(--bg-primary);
-    padding: 3px;
+    background: var(--bg-input);
+    padding: 2px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
   }
   .mode-toggle button {
     border: 0;
     background: transparent;
-    padding: 4px 14px;
-    border-radius: 6px;
+    padding: 4px 11px;
+    border-radius: var(--radius-sm);
     color: var(--text-thirdly);
-    font-size: 11.4px;
-    font-weight: 600;
+    font-size: 11.5px;
+    font-weight: 560;
   }
   .mode-toggle button:hover {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-hover);
   }
   .mode-toggle button.on {
-    background: var(--accent-primary-soft);
-    color: #fff;
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 50%, transparent);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
   }
 
   .icon-btn {
-    padding: 5px 8px;
+    padding: 5px 7px;
   }
 
   .status-dot {
@@ -268,5 +348,52 @@
     height: 5px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+
+  .jobs-wrap {
+    position: relative;
+  }
+  .jobs-pill {
+    font-size: 11.5px;
+    padding: 4px 9px;
+  }
+  .jobs-pill.active {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .jobs-popover {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    width: 310px;
+    max-height: 380px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--radius-lg);
+    padding: 12px;
+    box-shadow: var(--shadow-lg);
+    z-index: 60;
+  }
+
+  @media (max-width: 1080px) {
+    .proj-pill {
+      width: 110px;
+    }
+    .env-pill {
+      display: none;
+    }
   }
 </style>

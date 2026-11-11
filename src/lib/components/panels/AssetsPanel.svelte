@@ -51,7 +51,7 @@
         (type === 'image' ? imgIn : type === 'video' ? vidIn : audIn)?.click();
       }
     } catch (e) {
-      status = '❌ ' + (e?.message || e);
+      status = 'Error: ' + (e?.message || e);
     }
   }
 
@@ -105,7 +105,7 @@
         studio.toast(`Added ${a.name} overlay — drag or scroll on preview!`);
       }
     } catch (e) {
-      status = '❌ ' + (e?.message || e);
+      status = 'Error: ' + (e?.message || e);
     }
   }
 

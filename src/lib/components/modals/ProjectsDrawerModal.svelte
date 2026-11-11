@@ -178,14 +178,22 @@
               <button
                 type="button"
                 class="xs danger"
-                onclick={() => {
+                onclick={async () => {
+                  const ok = await studio.confirm({
+                    title: `Delete "${p.name || 'Untitled'}"?`,
+                    message: 'Removes this saved project entry from your library. Video files on disk are kept.',
+                    confirmText: 'Delete Project',
+                    danger: true,
+                  });
+                  if (!ok) return;
                   const next = studio.projects.filter((x) => x.id !== p.id);
                   localStorage.setItem(PROJECTS_KEY, JSON.stringify(next));
                   studio.projects = next;
+                  studio.toast('Project deleted');
                 }}
                 title="Delete project"
               >
-                ✕
+                Delete
               </button>
             </div>
           </div>

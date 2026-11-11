@@ -97,13 +97,19 @@ class StudioStore {
   styleSubTab = $state('main'); // 'main' | 'dual' | 'presets'
   dualSubTab = $state('layout'); // 'layout' | 'source' | 'trans'
   styleSearch = $state('');
-  uiTheme = $state(typeof localStorage !== 'undefined' ? localStorage.icsUiTheme || 'studio' : 'studio');
+  uiTheme = $state(
+    typeof localStorage !== 'undefined' && localStorage.icsUiTheme === 'light' ? 'light' : 'dark'
+  );
+  leftTab = $state('media');
+  inspectorTab = $state('auto'); // 'auto' | 'subtitles' | 'canvas' | 'overlays' | 'export'
+  previewZoom = $state(1);
   homeOpen = $state(true);
 
-  // Toast & UI Overlays
+  // Toast, Confirm & UI Overlays
   toastMsg = $state('');
   apiModalOpen = $state(false);
   colorPicker = $state({ open: false, x: 100, y: 100, hex: '#ffffff', onChange: null });
+  confirmDialog = $state({ open: false, title: '', message: '', confirmText: 'Confirm', cancelText: 'Cancel', danger: false, resolve: null });
 
   // Active Project State
   projectName = $state('');
@@ -150,6 +156,7 @@ class StudioStore {
   aspect = $state('9:16');
   trimS = $state(0);
   trimE = $state(0);
+  activeAiClip = $state(null);
   vol = $state(100);
   dir = $state(null);
 
@@ -165,6 +172,7 @@ class StudioStore {
   exportPct = $state(0);
   exportLabel = $state('Ready to export');
   exportStatus = $state('');
+  exportJobs = $state([]);
   dirty = 3;
   unsaved = $state(false);
   lastSavedAt = $state(0);
@@ -243,11 +251,24 @@ class StudioStore {
   }
 
   applyUiTheme(name) {
-    this.uiTheme = name;
+    const resolved = name === 'light' ? 'light' : 'dark';
+    this.uiTheme = resolved;
     try {
-      localStorage.icsUiTheme = name;
-      document.documentElement.dataset.theme = name === 'minbar' ? 'minbar' : 'studio';
+      localStorage.icsUiTheme = resolved;
+      document.documentElement.dataset.theme = resolved;
     } catch {}
+  }
+
+  confirm({ title = 'Confirm Action', message = '', confirmText = 'Continue', cancelText = 'Cancel', danger = false } = {}) {
+    return new Promise((resolve) => {
+      this.confirmDialog = { open: true, title, message, confirmText, cancelText, danger, resolve };
+    });
+  }
+
+  resolveConfirm(ok) {
+    const r = this.confirmDialog.resolve;
+    this.confirmDialog = { ...this.confirmDialog, open: false, resolve: null };
+    r?.(!!ok);
   }
 
   inv(markUnsaved = true) {
@@ -261,6 +282,34 @@ class StudioStore {
     this.toastTimer = setTimeout(() => {
       this.toastMsg = '';
     }, 2800);
+  }
+
+  addExportJob(job) {
+    this.exportJobs = [job, ...this.exportJobs].slice(0, 12);
+    this.syncExportSummary();
+  }
+
+  updateExportJob(id, patch) {
+    const idx = this.exportJobs.findIndex((j) => j.id === id);
+    if (idx < 0) return;
+    Object.assign(this.exportJobs[idx], patch);
+    this.syncExportSummary();
+  }
+
+  clearFinishedJobs() {
+    this.exportJobs = this.exportJobs.filter((j) => !j.done);
+    this.syncExportSummary();
+  }
+
+  syncExportSummary() {
+    const running = this.exportJobs.filter((j) => !j.done);
+    const latest = running[0] || this.exportJobs[0];
+    this.exporting = running.length > 0;
+    if (latest) {
+      this.exportPct = latest.pct ?? 0;
+      this.exportLabel = latest.label || '';
+      this.exportStatus = latest.status || '';
+    }
   }
 
   nextId() {

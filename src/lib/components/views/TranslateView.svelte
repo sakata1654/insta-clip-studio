@@ -71,7 +71,7 @@
         .map((m) => m.name.replace('models/', ''));
       testStatus = `${fetchedModels.length} models loaded`;
     } catch (e) {
-      testStatus = '❌ ' + (e?.message || e);
+      testStatus = 'Error: ' + (e?.message || e);
     }
   }
 
@@ -80,9 +80,9 @@
     testStatus = 'Testing…';
     try {
       const res = await aiCallJson(studio.TR, 'Return ONLY: {"items":[{"i":1,"t":"ok","issue":""}]}', '');
-      testStatus = res?.items?.length || Array.isArray(res) ? '✅ Works' : '⚠ Unexpected shape';
+      testStatus = res?.items?.length || Array.isArray(res) ? 'Connected' : 'Unexpected response';
     } catch (e) {
-      testStatus = '❌ ' + (e?.message || e);
+      testStatus = 'Error: ' + (e?.message || e);
     }
   }
 
@@ -227,7 +227,7 @@
       status = `${stopRequested ? 'Stopped' : 'Done'} — ${done} translated, ${hit} cached${fails ? `, ${fails} failed (Retry)` : ''}`;
       studio.snap();
     } catch (e) {
-      status = '❌ ' + (e?.message || e);
+      status = 'Error: ' + (e?.message || e);
     } finally {
       try {
         localStorage.icsTrC = JSON.stringify(Object.fromEntries(Object.entries(C).slice(-2500)));
@@ -388,7 +388,7 @@
           studio.toast('Dual Subtitles enabled! Style Source & Translation independently.');
         }}
       >
-        ⚡ Enable Dual Subs
+        Enable Dual Subs
       </button>
       <button
         type="button"
@@ -495,15 +495,16 @@
     grid-column: 1 / -1;
     grid-row: 2 / -1;
     display: grid;
-    grid-template-columns: 390px 1fr;
+    grid-template-columns: 380px 1fr;
     overflow: hidden;
     min-height: 0;
+    background: var(--bg-canvas);
   }
   .tr-side {
     padding: 12px;
     overflow: auto;
     border-right: 1px solid var(--border-color);
-    background: var(--bg-secondary);
+    background: var(--bg-rail);
   }
   .tr-main {
     display: flex;

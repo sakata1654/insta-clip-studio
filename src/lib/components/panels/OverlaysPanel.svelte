@@ -41,20 +41,40 @@
 
 <CategoryBlock
   title="Speaker Banner / Lower Third"
-  icon="sparkles"
+  icon="user"
   open={true}
   toggleChecked={!!studio.spk.on}
-  onToggle={(v) => ((studio.spk.on = v ? 1 : 0), studio.inv(), studio.snap())}
+  onToggle={(v) => {
+    studio.spk.on = v ? 1 : 0;
+    if (v && !studio.spk.text?.trim()) studio.spk.text = 'Speaker Name | Title or Role';
+    if (v && !studio.file && !studio.sampleSub) studio.sampleSub = 1;
+    studio.inv();
+    studio.snap();
+  }}
 >
   <StyleFieldRow label="Name | Subtitle" type="text" value={studio.spk.text} onchange={(v) => ((studio.spk.text = v), studio.inv())} />
 
   <div class="bar" style="margin-top:6px">
     <button type="button" class="xs pri" onclick={() => avatarIn?.click()}>
-      {studio.spk.avatarSrc ? 'Change Portrait' : '＋ Speaker Photo'}
+      {studio.spk.avatarSrc ? 'Change Portrait' : 'Add Speaker Photo'}
     </button>
     {#if studio.spk.avatarSrc}
       <button type="button" class="xs" onclick={() => ((studio.spk.avatarSrc = ''), studio.inv())}>Remove Photo</button>
     {/if}
+    <button
+      type="button"
+      class="xs"
+      onclick={() => {
+        studio.spk.on = 1;
+        studio.spk.pos = 'custom';
+        studio.spk.x = 50;
+        studio.spk.y = 74;
+        studio.inv();
+      }}
+      title="Center banner on canvas"
+    >
+      Center
+    </button>
   </div>
 
   <div class="style-control-group-heading">Style & Placement</div>
@@ -72,8 +92,8 @@
   <StyleFieldRow label="Corner radius" value={studio.spk.radius ?? 99} min={0} max={99} unit="px" onchange={(v) => ((studio.spk.radius = v), studio.inv())} />
 
   <div class="style-control-group-heading">Colors & Typography</div>
-  <StyleFieldRow label="Match video theme" type="check" value={studio.spk.useThemeColors !== false} onchange={(v) => ((studio.spk.useThemeColors = v), studio.inv())} />
-  {#if studio.spk.useThemeColors === false}
+  <StyleFieldRow label="Match video theme" type="check" value={studio.spk.useThemeColors === true} onchange={(v) => ((studio.spk.useThemeColors = v), studio.inv())} />
+  {#if !studio.spk.useThemeColors}
     <StyleFieldRow label="Bg color" type="color" value={studio.spk.bgColor || '#0f1420'} onchange={(v) => ((studio.spk.bgColor = v), studio.inv())} />
     <StyleFieldRow label="Name color" type="color" value={studio.spk.nameColor || '#ffd700'} onchange={(v) => ((studio.spk.nameColor = v), studio.inv())} />
     <StyleFieldRow label="Role color" type="color" value={studio.spk.roleColor || '#e2e8f0'} onchange={(v) => ((studio.spk.roleColor = v), studio.inv())} />

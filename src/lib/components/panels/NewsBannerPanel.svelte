@@ -47,10 +47,16 @@
 
 <CategoryBlock
   title="News Channel Banner & Ticker"
-  icon="film"
+  icon="tv"
   open={true}
   toggleChecked={!!studio.bn.on}
-  onToggle={(v) => ((studio.bn.on = v ? 1 : 0), studio.inv(), studio.snap())}
+  onToggle={(v) => {
+    studio.bn.on = v ? 1 : 0;
+    if (v && !studio.bn.text?.trim()) studio.bn.text = 'Official Briefing Headline';
+    if (v && !studio.file && !studio.sampleSub) studio.sampleSub = 1;
+    studio.inv();
+    studio.snap();
+  }}
 >
   <div class="bar" style="margin-bottom:8px">
     <button type="button" class="xs" onclick={() => applyQuickNewsTemplate('breaking')}>Breaking News</button>

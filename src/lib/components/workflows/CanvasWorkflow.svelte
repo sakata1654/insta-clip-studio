@@ -3,13 +3,9 @@
   import { studio } from '../../state.svelte.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import CameraPanel from '../panels/CameraPanel.svelte';
-  import EffectsPanel from '../panels/EffectsPanel.svelte';
-  import NewsBannerPanel from '../panels/NewsBannerPanel.svelte';
-  import OverlaysPanel from '../panels/OverlaysPanel.svelte';
-  import TextsPanel from '../panels/TextsPanel.svelte';
   import StyleFieldRow from '../StyleFieldRow.svelte';
 
-  let subTab = $state('layout'); // 'layout' | 'overlays' | 'camera'
+  let subTab = $state('layout'); // 'layout' | 'camera'
 
   const ratios = [
     { id: '9:16', label: '9:16 Reels', w: 14, h: 24 },
@@ -19,10 +15,9 @@
   ];
 </script>
 
-<div class="seg-pills tri">
-  <button type="button" class:on={subTab === 'layout'} onclick={() => (subTab = 'layout')}>Format & Look</button>
-  <button type="button" class:on={subTab === 'overlays'} onclick={() => (subTab = 'overlays')}>Overlays</button>
-  <button type="button" class:on={subTab === 'camera'} onclick={() => (subTab = 'camera')}>Cam & FX</button>
+<div class="seg-pills">
+  <button type="button" class:on={subTab === 'layout'} onclick={() => (subTab = 'layout')}>Aspect &amp; Card</button>
+  <button type="button" class:on={subTab === 'camera'} onclick={() => (subTab = 'camera')}>Camera &amp; Cuts</button>
 </div>
 
 {#if subTab === 'layout'}
@@ -101,13 +96,8 @@
       {/if}
     {/if}
   </CategoryBlock>
-{:else if subTab === 'overlays'}
-  <NewsBannerPanel />
-  <OverlaysPanel />
-  <TextsPanel />
 {:else}
   <CameraPanel />
-  <EffectsPanel />
 {/if}
 
 <style>

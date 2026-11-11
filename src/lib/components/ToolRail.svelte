@@ -1,19 +1,19 @@
 <script>
   import Icon from './Icon.svelte';
 
-  let { active = $bindable('captions') } = $props();
+  let { active = $bindable('media') } = $props();
 
   const rails = [
-    { id: 'media', label: 'Media', icon: 'media', tip: 'Upload, URL Download, Assets & B-Roll' },
-    { id: 'captions', label: 'Captions', icon: 'subtitles', tip: 'Transcribe, Edit, AI Split & Translate' },
-    { id: 'style', label: 'Style', icon: 'type', tip: 'Typography, Dual Subtitles & Quick Look' },
-    { id: 'canvas', label: 'Canvas', icon: 'layout', tip: 'Format, Frame, News & Speaker Banners' },
-    { id: 'presets', label: 'Presets', icon: 'palette', tip: 'Save & Transfer Full Studio JSON Presets' },
-    { id: 'export', label: 'Export', icon: 'upload', tip: 'Trim Range, Audio Enhance & MP4 Export' },
+    { id: 'media', label: '1. Media', icon: 'media', tip: 'Import video, download URL, overlay assets & AI clips' },
+    { id: 'subtitles', label: '2. Subtitles', icon: 'subtitles', tip: 'Generate, edit, AI-arrange & translate subtitles' },
+    { id: 'banners', label: '3. Text & Banners', icon: 'type', tip: 'Floating text, Speaker banner, News ticker & Watermark' },
+    { id: 'look', label: '4. Style & Look', icon: 'palette', tip: 'Format, card frame, subtitle fonts, color, glow & presets' },
+    { id: 'export', label: '5. Export', icon: 'upload', tip: 'Trim range, audio mastering, MP4 render & caption' },
   ];
 </script>
 
-<nav class="tool-rail" aria-label="Studio workflow tools">
+<nav class="tool-rail" aria-label="Editing steps">
+  <div class="rail-caption">WORKFLOW</div>
   {#each rails as r}
     <button
       type="button"
@@ -22,7 +22,7 @@
       title={r.tip}
       onclick={() => (active = r.id)}
     >
-      <span class="rail-ic"><Icon name={r.icon} size={17} /></span>
+      <span class="rail-ic"><Icon name={r.icon} size={15} /></span>
       <span class="rail-lbl">{r.label}</span>
     </button>
   {/each}
@@ -31,64 +31,74 @@
 <style>
   .tool-rail {
     grid-area: r;
-    width: 64px;
+    width: 136px;
     background: var(--bg-rail);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding: 10px 5px;
+    padding: 10px 8px;
     gap: 4px;
+    overflow-y: auto;
+  }
+
+  .rail-caption {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    padding: 2px 8px 6px;
   }
 
   .rail-btn {
-    width: 54px;
-    height: 52px;
+    width: 100%;
+    height: 38px;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
     background: transparent;
-    color: var(--text-thirdly);
+    color: var(--text-secondary);
     display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 4px 2px;
+    justify-content: flex-start;
+    gap: 9px;
+    padding: 0 9px;
     position: relative;
+    font-size: 12px;
+    font-weight: 550;
   }
 
   .rail-btn:hover {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.045);
+    background: var(--bg-hover);
   }
 
   .rail-btn.on {
-    color: #fff;
-    background: var(--accent-primary-soft);
-    border-color: color-mix(in srgb, var(--accent-primary) 42%, transparent);
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+    font-weight: 620;
   }
 
-  .rail-btn.on::after {
+  .rail-btn.on::before {
     content: '';
     position: absolute;
-    left: -5px;
-    top: 12px;
-    bottom: 12px;
+    left: -8px;
+    top: 8px;
+    bottom: 8px;
     width: 3px;
     border-radius: 0 3px 3px 0;
-    background: var(--accent-primary);
+    background: var(--accent);
   }
 
   .rail-ic {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 20px;
+    flex-shrink: 0;
   }
 
   .rail-lbl {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>
