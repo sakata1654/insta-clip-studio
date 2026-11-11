@@ -11,8 +11,10 @@
   let { onOpenProjects = () => {}, onSelectWorkflow = () => {} } = $props();
 
   let stageEl = $state(null);
+  let wrapEl = $state(null);
   let canvasEl = $state(null);
   let pd = $state(null);
+  let subFrame = $state(null);
   let quickVidIn = $state(null);
   let hudControlsOpen = $state(false);
   const touchPts = new Map();
@@ -20,6 +22,19 @@
 
   const formats = Object.keys(DIMS);
   const hasMediaOrSample = $derived(!!(studio.file || studio.aud.track || studio.sampleSub));
+  const showSubBbox = $derived(
+    !!(subFrame && !studio.exporting && (studio.subBoxSelected || studio.hoverLayer === 'sub' || pd?.subResize || pd?.sub))
+  );
+  const subHandles = [
+    { dir: 'nw', cls: 'c nw' },
+    { dir: 'n', cls: 'e n' },
+    { dir: 'ne', cls: 'c ne' },
+    { dir: 'e', cls: 'e ev' },
+    { dir: 'se', cls: 'c se' },
+    { dir: 's', cls: 'e s' },
+    { dir: 'sw', cls: 'c sw' },
+    { dir: 'w', cls: 'e wv' },
+  ];
 
   function launchTemplatePreview(preset) {
     applyStudioPreset(studio, preset);
@@ -49,8 +64,14 @@
       cw = h * r;
     }
     const z = studio.previewZoom || 1;
-    canvasEl.style.width = Math.max(1, cw * z) + 'px';
-    canvasEl.style.height = Math.max(1, ch * z) + 'px';
+    const cssW = Math.max(1, cw * z) + 'px';
+    const cssH = Math.max(1, ch * z) + 'px';
+    if (wrapEl) {
+      wrapEl.style.width = cssW;
+      wrapEl.style.height = cssH;
+    }
+    canvasEl.style.width = cssW;
+    canvasEl.style.height = cssH;
     studio.inv();
   }
 
@@ -79,6 +100,19 @@
         if (studio.dirty > 0) studio.dirty--;
         const sc = studio.exporting ? 1 : studio.previewScale;
         renderCanvasFrame(canvasEl, sc, pd);
+        const nb = studio.subMaxBox;
+        if (!nb && subFrame) subFrame = null;
+        else if (
+          nb &&
+          (!subFrame ||
+            Math.abs(nb.x - subFrame.x) >= 0.4 ||
+            Math.abs(nb.y - subFrame.y) >= 0.4 ||
+            Math.abs(nb.w - subFrame.w) >= 0.4 ||
+            Math.abs(nb.h - subFrame.h) >= 0.4 ||
+            nb.autoH !== subFrame.autoH)
+        ) {
+          subFrame = { ...nb };
+        }
       }
       raf = requestAnimationFrame(tick);
     };
@@ -98,6 +132,21 @@
     void viewport.width;
     void viewport.height;
     syncCanvasSize();
+  });
+
+  $effect(() => {
+    void studio.st.w;
+    void studio.st.wPx;
+    void studio.st.wUnit;
+    void studio.st.maxH;
+    void studio.st.maxHPx;
+    void studio.st.hUnit;
+    void studio.st.x;
+    void studio.st.y;
+    void studio.st.auto;
+    void studio.st.marginX;
+    void studio.subBoxSelected;
+    studio.inv();
   });
 
   async function quickPickVideo() {
@@ -171,6 +220,11 @@
       return;
     }
 
+    if (wantSrc || wantTr || (fb && Math.hypot(x - (fb.x + fb.w), y - (fb.y + fb.h)) < 48) || wantBn || wantSpk || ovObj || txtObj) {
+      studio.subBoxSelected = false;
+      if (studio.hoverLayer === 'sub') studio.hoverLayer = null;
+    }
+
     if (fb && Math.hypot(x - (fb.x + fb.w), y - (fb.y + fb.h)) < 48) pd = { rs: 1, x0: x, w0: studio.fr.w };
     else if (wantBn) {
       pd = { bn: 1, x0: x, y0: y, bx: studio.bn.x ?? 50, by: studio.bn.y ?? 88 };
@@ -183,13 +237,19 @@
     } else if (txtObj) {
       studio.sel = txtObj.id;
       pd = { o: txtObj };
-    } else if (hit(studio.subBox, x, y)) pd = { sub: 1 };
-    else if (inBox(box, x, y)) {
+    } else if (hit(studio.subBox, x, y) || hit(studio.subMaxBox, x, y)) {
+      studio.subBoxSelected = true;
+      pd = { sub: 1, x0: x, y0: y, sx: studio.st.x ?? 50, sy: studio.st.y ?? 80, cx0: e.clientX, cy0: e.clientY };
+    } else if (inBox(box, x, y)) {
+      studio.subBoxSelected = false;
+      if (studio.hoverLayer === 'sub') studio.hoverLayer = null;
       pd =
         studio.fr.on && (studio.dm === 'frame' || e.shiftKey)
           ? { fr: 1, x0: x, y0: y, fx: studio.fr.x, fy: studio.fr.y, cx0: e.clientX, cy0: e.clientY }
           : { pan: 1, x0: x, y0: y, px: studio.fx.px, py: studio.fx.py, bw: box.w, bh: box.h, cx0: e.clientX, cy0: e.clientY };
     } else {
+      studio.subBoxSelected = false;
+      if (studio.hoverLayer === 'sub') studio.hoverLayer = null;
       pd = { tapOnly: 1, cx0: e.clientX, cy0: e.clientY };
     }
 
@@ -227,7 +287,7 @@
         studio.selectedOverlayId = ov?.id || null;
         h = 'overlay';
       } else if (studio.texts.some((o) => hit(o.box, x, y))) h = 'text';
-      else if (hit(studio.subBox, x, y)) h = 'sub';
+      else if (hit(studio.subBox, x, y) || hit(studio.subMaxBox, x, y)) h = 'sub';
       if (h !== studio.hoverLayer) {
         studio.hoverLayer = h;
         studio.inv();
@@ -283,11 +343,15 @@
       studio.fx.py = Math.round(cl(pd.py + ((y - pd.y0) / pd.bh) * 100, -my, my) * 10) / 10;
       studio.saveShot();
     } else if (pd.sub) {
-      const v = cl(Math.round((y / studio.LH) * 100), 5, 95);
+      const vY = cl(Math.round((pd.sy + ((y - pd.y0) / studio.LH) * 100) * 10) / 10, 5, 95);
+      let vX = pd.sx + ((x - pd.x0) / studio.LW) * 100;
+      if (Math.abs(vX - 50) < 1.4) vX = 50;
+      vX = cl(Math.round(vX * 10) / 10, 10, 90);
       const a = studio.subs.find((s) => s.id === studio.act);
-      if (a?.st && a.st.y !== undefined) a.st.y = v;
+      if (a?.st && a.st.y !== undefined) a.st.y = vY;
       else {
-        studio.st.y = v;
+        studio.st.y = vY;
+        studio.st.x = vX;
         studio.st.auto = 0;
       }
     }
@@ -340,6 +404,98 @@
     studio.inv();
   }
 
+  function startSubResize(dir, e) {
+    if (!subFrame) return;
+    e.stopPropagation();
+    e.preventDefault();
+    studio.subBoxSelected = true;
+    const [x0, y0] = cp(e);
+    pd = {
+      subResize: dir,
+      x0,
+      y0,
+      left0: subFrame.x,
+      right0: subFrame.x + subFrame.w,
+      top0: subFrame.y,
+      bot0: subFrame.y + subFrame.h,
+      cx0: subFrame.cx,
+      cy0: subFrame.cy,
+    };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  }
+
+  function endSubResize() {
+    if (pd?.subResize) {
+      pd = null;
+      studio.snap();
+      studio.inv();
+    }
+  }
+
+  function onResizeHandleMove(e) {
+    if (!pd?.subResize || !subFrame) return;
+    const [cx, cy] = cp(e);
+    const W = studio.LW;
+    const H = studio.LH;
+    const dx = cx - pd.x0;
+    const dy = cy - pd.y0;
+    const marginPct = cl(Number(studio.st.marginX ?? 6), 0, 25) / 100;
+    const minEdge = W * marginPct;
+    const minBoxW = Math.max(180, W * 0.18);
+    const minBoxH = Math.max(56, H * 0.05);
+    const resScale = Math.min(W, H) / 1080;
+    const d = pd.subResize;
+
+    if (d.includes('w') || d.includes('e')) {
+      let newL = pd.left0;
+      let newR = pd.right0;
+      if (e.altKey) {
+        const delta = d.includes('e') ? dx : -dx;
+        const half = cl((pd.right0 - pd.left0) * 0.5 + delta, minBoxW * 0.5, Math.min(pd.cx0 - minEdge, W - minEdge - pd.cx0));
+        newL = pd.cx0 - half;
+        newR = pd.cx0 + half;
+      } else if (d.includes('e')) {
+        newR = cl(pd.right0 + dx, pd.left0 + minBoxW, W - minEdge);
+      } else {
+        newL = cl(pd.left0 + dx, minEdge, pd.right0 - minBoxW);
+      }
+      const newW = newR - newL;
+      let nx = ((newL + newW * 0.5) / W) * 100;
+      if (Math.abs(nx - 50) < 1.2) nx = 50;
+      studio.st.x = cl(Math.round(nx * 10) / 10, 10, 90);
+      if (studio.st.wUnit === 'px') {
+        studio.st.wPx = cl(Math.round(newW / resScale / 2) * 2, 220, 1800);
+      } else {
+        studio.st.w = cl(Math.round((newW / W) * 1000) / 10, 20, 96);
+      }
+    }
+
+    if (d.includes('n') || d.includes('s')) {
+      let newT = pd.top0;
+      let newB = pd.bot0;
+      if (e.altKey) {
+        const delta = d.includes('s') ? dy : -dy;
+        const half = cl((pd.bot0 - pd.top0) * 0.5 + delta, minBoxH * 0.5, Math.min(pd.cy0 - 12, H - 12 - pd.cy0));
+        newT = pd.cy0 - half;
+        newB = pd.cy0 + half;
+      } else if (d.includes('s')) {
+        newB = cl(pd.bot0 + dy, pd.top0 + minBoxH, H - 12);
+      } else {
+        newT = cl(pd.top0 + dy, 12, pd.bot0 - minBoxH);
+      }
+      const newH = newB - newT;
+      const ny = ((newT + newH * 0.5) / H) * 100;
+      studio.st.auto = 0;
+      studio.st.y = cl(Math.round(ny * 10) / 10, 5, 95);
+      if (studio.st.hUnit === 'px') {
+        studio.st.maxHPx = cl(Math.round(newH / resScale / 2) * 2, 60, 900);
+      } else {
+        studio.st.maxH = cl(Math.round((newH / H) * 1000) / 10, 6, 70);
+      }
+    }
+    studio.inv();
+  }
+
   export async function togglePlay() {
     const V = studio.V;
     const A = studio.A;
@@ -370,6 +526,13 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={(e) => {
+  if (e.key === 'Escape' && studio.subBoxSelected) {
+    studio.subBoxSelected = false;
+    studio.inv();
+  }
+}} />
 
 <input
   bind:this={quickVidIn}
@@ -462,38 +625,69 @@
     </div>
 
     <div class="canvas-scroll">
-      <canvas
-        bind:this={canvasEl}
-        class="canvas-el"
-        onpointerenter={() => {
-          studio.hov = 1;
-          studio.inv();
-        }}
-        onpointerleave={(e) => {
-          touchPts.delete(e.pointerId);
-          studio.hov = 0;
-          studio.hoverLayer = null;
-          studio.inv();
-        }}
-        onpointercancel={(e) => {
-          touchPts.delete(e.pointerId);
-          pinchState = null;
-          pd = null;
-        }}
-        onpointerdown={onPointerDown}
-        onpointermove={onPointerMove}
-        onpointerup={(e) => {
-          touchPts.delete(e.pointerId);
-          if (touchPts.size < 2) pinchState = null;
-          if (viewport.isCoarse && pd && !pd.moved && (pd.tapOnly || pd.pan) && hasMediaOrSample) {
-            togglePlay();
-          } else if (pd && !pd.tapOnly) {
-            studio.snap();
-          }
-          pd = null;
-        }}
-        onwheel={onWheel}
-      ></canvas>
+      <div class="canvas-stage-wrap" bind:this={wrapEl}>
+        <canvas
+          bind:this={canvasEl}
+          class="canvas-el"
+          onpointerenter={() => {
+            studio.hov = 1;
+            studio.inv();
+          }}
+          onpointerleave={(e) => {
+            touchPts.delete(e.pointerId);
+            studio.hov = 0;
+            studio.hoverLayer = null;
+            studio.inv();
+          }}
+          onpointercancel={(e) => {
+            touchPts.delete(e.pointerId);
+            pinchState = null;
+            pd = null;
+          }}
+          onpointerdown={onPointerDown}
+          onpointermove={onPointerMove}
+          onpointerup={(e) => {
+            touchPts.delete(e.pointerId);
+            if (touchPts.size < 2) pinchState = null;
+            if (viewport.isCoarse && pd && !pd.moved && (pd.tapOnly || pd.pan) && hasMediaOrSample) {
+              togglePlay();
+            } else if (pd && !pd.tapOnly) {
+              studio.snap();
+            }
+            pd = null;
+          }}
+          onwheel={onWheel}
+        ></canvas>
+        {#if showSubBbox}
+          <div
+            class="sub-bbox"
+            class:selected={studio.subBoxSelected || !!pd?.subResize || !!pd?.sub}
+            class:hoverOnly={!studio.subBoxSelected && studio.hoverLayer === 'sub'}
+            style="left:{(subFrame.x / studio.LW) * 100}%;top:{(subFrame.y / studio.LH) * 100}%;width:{(subFrame.w / studio.LW) * 100}%;height:{(subFrame.h / studio.LH) * 100}%"
+            aria-label="Subtitle layout bounding box"
+          >
+            {#if studio.subBoxSelected || pd?.subResize}
+              {#each subHandles as h (h.dir)}
+                <button
+                  type="button"
+                  class="sub-handle {h.cls}"
+                  aria-label="Resize subtitle box {h.dir}"
+                  onpointerdown={(e) => startSubResize(h.dir, e)}
+                  onpointermove={onResizeHandleMove}
+                  onpointerup={endSubResize}
+                  onpointercancel={endSubResize}
+                ></button>
+              {/each}
+            {/if}
+            {#if pd?.subResize || studio.subBoxSelected}
+              <div class="sub-dim-pill mono" class:below={subFrame.y < studio.LH * 0.12}>
+                {studio.st.wUnit === 'px' ? `${studio.st.wPx}px` : `${studio.st.w}%`} × {studio.st.hUnit === 'px' ? (studio.st.maxHPx > 0 ? `${studio.st.maxHPx}px` : 'Auto') : (studio.st.maxH > 0 ? `${studio.st.maxH}%` : 'Auto')}
+                <span class="px-sub">({Math.round(subFrame.w)}×{Math.round(subFrame.h)})</span>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
 
     {#if !hasMediaOrSample}
@@ -637,6 +831,108 @@
     box-shadow: var(--shadow-lg), 0 0 0 1px var(--border-mid);
     cursor: move;
     touch-action: none;
+    display: block;
+  }
+  .canvas-stage-wrap {
+    position: relative;
+    line-height: 0;
+  }
+  .sub-bbox {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 3;
+    border: 1.5px solid rgba(59, 130, 246, 0.92);
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.45);
+    transition: border-color 120ms ease;
+  }
+  .sub-bbox.hoverOnly {
+    border-style: dashed;
+    border-color: rgba(96, 165, 250, 0.78);
+    background: rgba(59, 130, 246, 0.04);
+  }
+  .sub-bbox.selected {
+    border-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.05);
+  }
+  .sub-handle {
+    position: absolute;
+    pointer-events: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    touch-action: none;
+    z-index: 4;
+  }
+  .sub-handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #ffffff;
+    border: 1.5px solid #2563eb;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    transition: transform 90ms ease, background 90ms ease;
+  }
+  .sub-handle:hover::after {
+    background: #dbeafe;
+    transform: translate(-50%, -50%) scale(1.18);
+  }
+  .sub-handle.c {
+    width: 24px;
+    height: 24px;
+  }
+  .sub-handle.c::after {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+  .sub-handle.nw { top: -12px; left: -12px; cursor: nwse-resize; }
+  .sub-handle.ne { top: -12px; right: -12px; cursor: nesw-resize; }
+  .sub-handle.se { bottom: -12px; right: -12px; cursor: nwse-resize; }
+  .sub-handle.sw { bottom: -12px; left: -12px; cursor: nesw-resize; }
+
+  .sub-handle.n { top: -12px; left: 14px; right: 14px; height: 24px; cursor: ns-resize; }
+  .sub-handle.s { bottom: -12px; left: 14px; right: 14px; height: 24px; cursor: ns-resize; }
+  .sub-handle.n::after,
+  .sub-handle.s::after {
+    width: 22px;
+    height: 5px;
+    border-radius: 99px;
+  }
+  .sub-handle.wv { left: -12px; top: 14px; bottom: 14px; width: 24px; cursor: ew-resize; }
+  .sub-handle.ev { right: -12px; top: 14px; bottom: 14px; width: 24px; cursor: ew-resize; }
+  .sub-handle.wv::after,
+  .sub-handle.ev::after {
+    width: 5px;
+    height: 22px;
+    border-radius: 99px;
+  }
+  .sub-dim-pill {
+    position: absolute;
+    left: 50%;
+    top: -24px;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid rgba(59, 130, 246, 0.65);
+    color: #e2e8f0;
+    font-size: 10px;
+    line-height: 1.3;
+    padding: 2px 7px;
+    border-radius: 99px;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  }
+  .sub-dim-pill.below {
+    top: auto;
+    bottom: -24px;
+  }
+  .sub-dim-pill .px-sub {
+    opacity: 0.72;
+    margin-left: 3px;
   }
   .hud-top {
     position: absolute;

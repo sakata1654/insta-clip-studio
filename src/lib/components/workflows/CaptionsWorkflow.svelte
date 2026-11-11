@@ -122,9 +122,9 @@
       });
 
       const out = JSON.parse(resRaw);
-      const mc = studio.subCfg.maxChars || 42;
-      const mw = studio.subCfg.maxWords || 8;
-      const md = studio.subCfg.maxDur || 6;
+      const mc = studio.subCfg.maxChars || 84;
+      const mw = studio.subCfg.maxWords || 12;
+      const md = studio.subCfg.maxDur || 8;
       const rawSubs = out.segments
         ? segsToSubs(out.segments, mc, mw, md, () => studio.nextId())
         : studio.parseSRT(out.srt);
@@ -135,8 +135,9 @@
         studio.subCfg.padAfterMs,
         studio.dur || studio.audioDuration || durHint || 0
       );
+      studio.expandPipeSubtitles(false);
       pct = 100;
-      status = `${studio.subs.length} cues ready (max ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
+      status = `${studio.subs.length} cues ready (target ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
       studio.inv();
       studio.snap();
       subTab = 'edit';
@@ -178,6 +179,7 @@
         trPct = Math.round(((i + ch.length) / studio.subs.length) * 100);
         studio.inv();
       }
+      if (studio.TR.live) studio.expandPipeSubtitles(false);
       trStatus = `Done · ${studio.subs.length} cues translated`;
       studio.snap();
     } catch (e) {
@@ -277,7 +279,7 @@
     <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-top:8px" />
   </CategoryBlock>
 
-  <CategoryBlock title="Limits & Padding (Default: 8w · 500ms)" icon="sliders" open={true}>
+  <CategoryBlock title="Natural Segmentation (Target: 8–12w · 500ms)" icon="sliders" open={true}>
     <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
       <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
       <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
@@ -310,6 +312,7 @@
         try {
           const g = await aiSemanticRearrange(studio.subs, cfg, studio.subCfg);
           studio.subs = applySubtitlePadding(g.map((x) => ({ id: studio.nextId(), ...x })), studio.subCfg.padBeforeMs, studio.subCfg.padAfterMs, studio.dur);
+          studio.expandPipeSubtitles(false);
           studio.inv();
           studio.snap();
         } catch (e) {
@@ -378,6 +381,9 @@
         <span class="badge mono">{o.s.toFixed(1)}s → {o.e.toFixed(1)}s</span>
         <span class="badge mono">{(o.t || '').trim().split(/\s+/).filter(Boolean).length}w</span>
         <span style="flex:1"></span>
+        {#if (o.t || '').includes('|')}
+          <button type="button" class="xs pri" onclick={() => studio.expandPipeSubtitles()} title="Split subtitle at | separator">Split |</button>
+        {/if}
         {#if ix < studio.subs.length - 1}
           <button type="button" class="xs" onclick={() => studio.transferWord(ix, 'prev')} title="Pull word">←</button>
           <button type="button" class="xs" onclick={() => studio.transferWord(ix, 'next')} title="Push word">→</button>
@@ -395,6 +401,7 @@
           o.t = e.currentTarget.value;
           studio.inv();
         }}
+        onblur={() => studio.expandPipeSubtitles()}
       ></textarea>
       {#if o.tr}
         <div class="hint" style="margin:3px 0 0;font-size:11px;color:var(--accent-secondary)">{o.tr}</div>

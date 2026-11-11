@@ -143,9 +143,9 @@
       });
 
       const out = JSON.parse(rawOut);
-      const mc = studio.subCfg.maxChars || (out.engine === 'cohere' ? 42 : 0);
-      const mw = studio.subCfg.maxWords || 8;
-      const md = studio.subCfg.maxDur || 6;
+      const mc = studio.subCfg.maxChars || 84;
+      const mw = studio.subCfg.maxWords || 12;
+      const md = studio.subCfg.maxDur || 8;
       const rawSubs = out.segments
         ? segsToSubs(out.segments, mc, mw, md, () => studio.nextId())
         : studio.parseSRT(out.srt);
@@ -156,6 +156,7 @@
         studio.subCfg.padAfterMs,
         studio.dur || studio.audioDuration || durHint || 0
       );
+      studio.expandPipeSubtitles(false);
       asrPct = 100;
       const label = out.engine === 'elevenlabs' ? `ElevenLabs ${out.model || elModel}` : out.engine === 'cohere' ? 'Cohere Transcribe' : 'Whisper';
       asrStatus = `${studio.subs.length} subtitles created with ${label} (max ${mw}w · pad −${studio.subCfg.padBeforeMs}/+${studio.subCfg.padAfterMs}ms).`;

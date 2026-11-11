@@ -184,8 +184,12 @@
     if (next && next !== editOrig) {
       sub.t = next;
       if (sub.orig !== undefined) sub.orig = next;
-      studio.inv();
-      studio.snap();
+      if (next.includes('|')) {
+        studio.expandPipeSubtitles(true);
+      } else {
+        studio.inv();
+        studio.snap();
+      }
     }
   }
 

@@ -78,6 +78,20 @@
       value={Number(value ?? 0)}
       oninput={(e) => onchange(+e.currentTarget.value)}
     />
-    <span class="val-pill mono">{value}{unit}</span>
+    <span class="val-pill mono">
+      <input
+        class="val-num mono"
+        type="number"
+        {min}
+        {max}
+        {step}
+        aria-label="{label} value"
+        value={Number(value ?? 0)}
+        onchange={(e) => {
+          const n = +e.currentTarget.value;
+          if (Number.isFinite(n)) onchange(Math.max(min, Math.min(max, n)));
+        }}
+      />{#if unit}<span class="val-unit">{unit}</span>{/if}
+    </span>
   {/if}
 </div>

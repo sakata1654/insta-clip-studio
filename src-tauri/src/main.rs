@@ -751,8 +751,8 @@ fn elevenlabs_words_to_segments(words: &[Value], fallback_text: &str, total_dura
             let speaker_changed = !prev.3.is_empty() && !tok.3.is_empty() && prev.3 != tok.3;
             let cur_dur = tok.1 - cur[0].0;
             let cur_chars: usize = cur.iter().map(|x| x.2.chars().count() + 1).sum();
-            let word_limit = if max_words > 0 { max_words } else { 8 };
-            if ends_sentence || speaker_changed || gap >= 0.75 || cur.len() >= word_limit || cur_chars >= 110 || cur_dur >= 8.0 {
+            let word_limit = (if max_words > 0 { max_words } else { 12 }).saturating_mul(2).max(24);
+            if ends_sentence || speaker_changed || gap >= 0.85 || cur.len() >= word_limit || cur_chars >= 220 || cur_dur >= 14.0 {
                 flush(&mut cur, &mut segs);
             }
         }

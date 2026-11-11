@@ -3,12 +3,13 @@
  * Cloud ASR endpoint for browser-extracted lightweight audio chunks (<= 4.2 MB).
  * Supports ElevenLabs Scribe v2 (preferred for Arabic/Urdu/diarization) and OpenAI Whisper.
  */
-function normalizeWordsToSegments(words = [], fallbackText = '', maxWords = 8) {
+function normalizeWordsToSegments(words = [], fallbackText = '', maxWords = 12) {
   const tokens = (words || []).filter((w) => w && String(w.text ?? w.word ?? '').trim() && (w.type ? w.type !== 'spacing' : true));
   if (!tokens.length) {
     const t = String(fallbackText || '').trim();
     return t ? [{ s: 0, e: 4, t, w: [] }] : [];
   }
+  const containerMax = Math.max(24, maxWords * 2);
   const segs = [];
   let cur = [];
   const flush = () => {
@@ -24,9 +25,9 @@ function normalizeWordsToSegments(words = [], fallbackText = '', maxWords = 8) {
     const e = Math.max(s + 0.05, Number(tk.end ?? tk.e ?? s + 0.2));
     const prevEnd = cur.length ? cur[cur.length - 1].e : s;
     const pauseGap = s - prevEnd;
-    if (cur.length && (cur.length >= maxWords || pauseGap >= 0.7)) flush();
+    if (cur.length && (cur.length >= containerMax || pauseGap >= 0.85)) flush();
     cur.push({ w: word, s, e });
-    if (/[.!?؟۔]$/.test(word) && cur.length >= 2) flush();
+    if (/[.!?؟۔…]$/.test(word) && cur.length >= 3) flush();
   }
   flush();
   return segs;
@@ -47,7 +48,7 @@ export default async function handler(req, res) {
   const mime = String(body?.mimeType || 'audio/wav');
   const lang = String(body?.lang || '').trim();
   const model = String(body?.model || (engine === 'elevenlabs' ? 'scribe_v2' : 'whisper-1'));
-  const maxWords = Math.max(3, Math.min(18, Number(body?.maxWords) || 8));
+  const maxWords = Math.max(3, Math.min(18, Number(body?.maxWords) || 12));
   const diarize = !!body?.diarize;
   const tagAudioEvents = !!body?.tagAudioEvents;
 

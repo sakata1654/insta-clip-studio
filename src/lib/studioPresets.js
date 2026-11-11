@@ -181,7 +181,7 @@ export async function exportPresetToJson(preset) {
     try {
       const savePath = await T.dialog.save({
         defaultPath: filename,
-        filters: [{ name: 'Insta Clip Studio Preset', extensions: ['json', 'icpreset.json'] }],
+        filters: [{ name: 'Tibyan Studio Preset', extensions: ['json', 'icpreset.json'] }],
       });
       if (savePath) {
         await T.fs.writeTextFile(savePath, jsonText);

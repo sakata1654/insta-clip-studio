@@ -158,6 +158,7 @@
               selSub.t = e.currentTarget.value;
               studio.inv();
             }}
+            onblur={() => studio.expandPipeSubtitles()}
           ></textarea>
           {#if selSub.tr !== undefined || studio.du.on}
             <label class="hint" for="insp-sub-tr" style="margin:6px 0 2px;display:block">Translation Line</label>
@@ -171,9 +172,13 @@
                 selSub.tr = e.currentTarget.value;
                 studio.inv();
               }}
+              onblur={() => studio.expandPipeSubtitles()}
             ></textarea>
           {/if}
           <div class="bar" style="margin-top:8px;margin-bottom:0">
+            {#if (selSub.t || '').includes('|') || (selSub.tr || '').includes('|')}
+              <button type="button" class="xs pri" onclick={() => studio.expandPipeSubtitles()} title="Divide this cue at | separator">Split on |</button>
+            {/if}
             {#if subIdx < studio.subs.length - 1}
               <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'prev')}>Pull Word</button>
               <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'next')}>Push Word</button>

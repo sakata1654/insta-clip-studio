@@ -503,7 +503,7 @@
         <button
           type="button"
           class="xs"
-          onclick={() => saveBlob(new Blob([JSON.stringify(customPresets, null, 2)], { type: 'application/json' }), 'instaclip-presets.json')}
+          onclick={() => saveBlob(new Blob([JSON.stringify(customPresets, null, 2)], { type: 'application/json' }), 'tibyan-studio-presets.json')}
         >
           Export JSON
         </button>

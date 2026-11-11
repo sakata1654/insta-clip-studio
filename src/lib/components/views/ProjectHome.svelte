@@ -258,10 +258,10 @@
     <!-- Homepage Header -->
     <header class="home-topbar">
       <div class="rt" style="gap:10px">
-        <div class="home-logo"><Icon name="film" size={16} /></div>
+        <div class="home-logo"><img src="/app-icon.png" alt="Tibyan Studio" class="home-pfp" /></div>
         <div>
           <div class="rt" style="gap:8px">
-            <span class="home-brand">InstaClip Studio</span>
+            <span class="home-brand">Tibyan Studio</span>
             <span class="badge">v1.5</span>
           </div>
           <span class="home-sub">Desktop Video &amp; Caption Workspace</span>
@@ -501,13 +501,21 @@
   }
 
   .home-logo {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     border-radius: var(--radius-md);
-    background: var(--accent);
+    background: #474b33;
+    overflow: hidden;
     color: #ffffff;
     display: grid;
     place-items: center;
+    flex-shrink: 0;
+  }
+  .home-pfp {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .home-brand {

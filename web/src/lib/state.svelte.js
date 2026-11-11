@@ -17,7 +17,7 @@ import {
   WM0,
 } from './constants.js';
 import { migrateLegacyDual } from './presets.js';
-import { applySubtitlePadding, synthWords } from './prompts.js';
+import { applySubtitlePadding, expandAllPipeSubtitles, segsToSubs, splitCueByPipe, synthWords } from './prompts.js';
 import { getTauri } from './tauriBridge.js';
 import { fetchServerHealth } from './webPlatform/webAiClient.js';
 import { getBrowserCapabilities } from './webPlatform/webExportEngine.js';
@@ -146,6 +146,7 @@ class StudioStore {
   selectedOverlayId = $state(null);
   hov = $state(0);
   hoverLayer = $state(null);
+  subBoxSelected = $state(false);
   sample = $state(0);
   sampleSub = $state(0);
   path = $state(null);
@@ -197,6 +198,7 @@ class StudioStore {
   spkBox = null;
   bnBox = null;
   subBox = null;
+  subMaxBox = null;
   duSourceBox = null;
   duTransBox = null;
 
@@ -580,7 +582,7 @@ class StudioStore {
   /* ---------- Subtitle Operations (including Minbar word-transfer) ---------- */
 
   parseSRT(txt) {
-    return String(txt || '')
+    const parsed = String(txt || '')
       .replace(/\r/g, '')
       .trim()
       .split(/\n\n+/)
@@ -594,6 +596,18 @@ class StudioStore {
         return { id: this.nextId(), s: rs, e: re, rawS: rs, rawE: re, t: l.slice(i + 1).join('\n') };
       })
       .filter(Boolean);
+    return expandAllPipeSubtitles(parsed, () => this.nextId());
+  }
+
+  expandPipeSubtitles(recordHistory = true) {
+    const before = this.subs.length;
+    if (!this.subs.some((o) => String(o.t || '').includes('|') || String(o.tr || '').includes('|'))) return 0;
+    const next = expandAllPipeSubtitles(this.subs, () => this.nextId());
+    this.subs = next;
+    if (this.sel && !this.subs.some((s) => s.id === this.sel)) this.sel = this.subs[0]?.id ?? null;
+    this.inv();
+    if (recordHistory) this.snap();
+    return Math.max(0, next.length - before);
   }
 
   rewrapAndPad() {
@@ -604,46 +618,20 @@ class StudioStore {
     const padB = Math.max(0, Number(this.subCfg.padBeforeMs) || 0);
     const padA = Math.max(0, Number(this.subCfg.padAfterMs) || 0);
 
-    const sorted = [...this.subs].sort((a, b) => (a.rawS ?? a.s) - (b.rawS ?? b.s));
-    let nextSubs = [];
+    const sorted = expandAllPipeSubtitles(
+      [...this.subs].sort((a, b) => (a.rawS ?? a.s) - (b.rawS ?? b.s)),
+      () => this.nextId()
+    );
+    let nextSubs;
     if (maxC > 0 || maxW > 0 || maxD > 0) {
-      // Dynamically flatten then re-split cleanly using word timestamps
-      for (const o of sorted) {
+      const segInput = sorted.map((o) => {
         const bs = o.rawS ?? o.s;
         const be = o.rawE ?? o.e;
-        const text = o.orig !== undefined ? o.orig : o.t;
+        const text = String(o.orig !== undefined ? o.orig : o.t || '').trim();
         const ws = o.words && o.words.length ? o.words : synthWords({ s: bs, e: be, t: text });
-        if (!ws.length) {
-          nextSubs.push({ ...o, rawS: bs, rawE: be });
-          continue;
-        }
-        // Inline split matching splitByLimits
-        let cur = [];
-        const flush = () => {
-          if (!cur.length) return;
-          const rs = cur[0].s;
-          const re = cur[cur.length - 1].e;
-          nextSubs.push({
-            id: this.nextId(),
-            s: rs,
-            e: re,
-            rawS: rs,
-            rawE: re,
-            t: cur.map((w) => w.w).join(' '),
-            words: cur.map((w) => ({ w: w.w, s: w.s, e: w.e })),
-          });
-          cur = [];
-        };
-        for (const w of ws) {
-          const nextTxt = [...cur.map((x) => x.w), w.w].join(' ');
-          const overC = maxC > 0 && nextTxt.length > maxC;
-          const overW = maxW > 0 && cur.length + 1 > maxW;
-          const overD = maxD > 0 && cur.length > 0 && w.e - cur[0].s > maxD;
-          if (cur.length && (overC || overW || overD)) flush();
-          cur.push(w);
-        }
-        flush();
-      }
+        return { s: bs, e: be, t: text, w: ws };
+      });
+      nextSubs = segsToSubs(segInput, maxC, maxW, maxD, () => this.nextId());
     } else {
       nextSubs = sorted.map((o) => ({ ...o }));
     }
@@ -651,7 +639,7 @@ class StudioStore {
     this.subs = applySubtitlePadding(nextSubs, padB, padA, this.dur || this.audioDuration || 0);
     this.inv();
     this.snap();
-    this.toast(`Updated ${this.subs.length} subtitles (max ${maxW || '∞'}w · pad −${padB}/+${padA}ms)`);
+    this.toast(`Updated ${this.subs.length} subtitles (target ${maxW || '∞'}w · pad −${padB}/+${padA}ms)`);
   }
 
   stepFrame(dir = 1) {
@@ -673,41 +661,77 @@ class StudioStore {
     if (ix < 0) return this.toast('Move playhead inside a subtitle block to split (D)');
 
     const s = this.subs[ix];
+    if (String(s.t || '').includes('|')) {
+      const parts = splitCueByPipe(s, () => this.nextId());
+      this.subs.splice(ix, 1, ...parts);
+      this.sel = parts[1]?.id ?? parts[0]?.id ?? null;
+      this.inv();
+      this.snap();
+      return parts[1] || parts[0];
+    }
+
     const ws = String(s.t || '').trim().split(/\s+/).filter(Boolean);
     if (ws.length < 2) return this.toast('Need at least 2 words in subtitle to split');
 
+    const hasExactWords = Array.isArray(s.words) && s.words.length === ws.length;
     let splitIdx = -1;
-    if (Array.isArray(s.words) && s.words.length === ws.length) {
+    let splitTime = t;
+    if (hasExactWords) {
       for (let i = 1; i < s.words.length; i++) {
-        if ((s.words[i].s + s.words[i - 1].e) * 0.5 >= t) {
+        const mid = (s.words[i].s + s.words[i - 1].e) * 0.5;
+        if (mid >= t) {
           splitIdx = i;
+          splitTime = cl(mid, s.s + 0.04, s.e - 0.04);
           break;
         }
       }
-      if (splitIdx < 0) splitIdx = ws.length - 1;
+      if (splitIdx < 0) {
+        splitIdx = ws.length - 1;
+        const tailMid = (s.words[splitIdx].s + s.words[splitIdx - 1].e) * 0.5;
+        splitTime = cl(tailMid, s.s + 0.04, s.e - 0.04);
+      }
     } else {
       const ratio = (t - s.s) / Math.max(0.1, s.e - s.s);
       splitIdx = Math.max(1, Math.min(ws.length - 1, Math.round(ws.length * ratio)));
     }
+    splitTime = +cl(splitTime, s.s + 0.04, s.e - 0.04).toFixed(3);
 
-    const leftWords = Array.isArray(s.words) && s.words.length === ws.length ? s.words.slice(0, splitIdx) : undefined;
-    const rightWords = Array.isArray(s.words) && s.words.length === ws.length ? s.words.slice(splitIdx) : undefined;
+    const leftText = ws.slice(0, splitIdx).join(' ');
+    const rightText = ws.slice(splitIdx).join(' ');
+    const leftWords = hasExactWords ? s.words.slice(0, splitIdx) : synthWords({ s: s.s, e: splitTime, t: leftText });
+    const rightWords = hasExactWords ? s.words.slice(splitIdx) : synthWords({ s: splitTime, e: s.e, t: rightText });
+
+    const splitExtra = (val) => {
+      if (val === undefined) return undefined;
+      const arr = String(val).trim().split(/\s+/).filter(Boolean);
+      if (arr.length < 2) return [val, ''];
+      const cut = Math.max(1, Math.min(arr.length - 1, Math.round((arr.length * splitIdx) / ws.length)));
+      return [arr.slice(0, cut).join(' '), arr.slice(cut).join(' ')];
+    };
+    const origSplit = s.orig !== undefined && s.orig !== s.t ? splitExtra(s.orig) : s.orig !== undefined ? [leftText, rightText] : null;
+    const trSplit = s.tr !== undefined && s.tr !== s.t ? splitExtra(s.tr) : s.tr !== undefined ? [leftText, rightText] : null;
+
     const right = {
       ...s,
       id: this.nextId(),
-      s: t,
-      rawS: t,
+      s: splitTime,
+      rawS: splitTime,
       e: s.e,
       rawE: s.rawE ?? s.e,
-      t: ws.slice(splitIdx).join(' '),
-      ...(s.orig !== undefined ? { orig: ws.slice(splitIdx).join(' ') } : {}),
-      ...(rightWords ? { words: rightWords } : { words: undefined }),
+      t: rightText,
+      words: rightWords,
+      ...(s.st ? { st: JSON.parse(JSON.stringify(s.st)) } : {}),
+      ...(origSplit ? { orig: origSplit[1] } : {}),
+      ...(trSplit ? { tr: trSplit[1] } : {}),
     };
-    s.e = t;
-    s.rawE = t;
-    s.t = ws.slice(0, splitIdx).join(' ');
-    if (s.orig !== undefined) s.orig = s.t;
-    if (leftWords) s.words = leftWords;
+    delete right.trIssue;
+
+    s.e = splitTime;
+    s.rawE = splitTime;
+    s.t = leftText;
+    s.words = leftWords;
+    if (origSplit) s.orig = origSplit[0];
+    if (trSplit) s.tr = trSplit[0];
 
     this.subs.splice(ix + 1, 0, right);
     this.sel = right.id;

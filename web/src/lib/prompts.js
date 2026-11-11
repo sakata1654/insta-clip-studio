@@ -10,15 +10,17 @@ import { webAiCallJson } from './webPlatform/webAiClient.js';
  *    Islamic terminology rules, Salawat rule, and explicit `issue` uncertainty field.
  */
 
-export const REARRANGE_SYSTEM_PROMPT = `You are a multilingual subtitle editor, especially skilled in Arabic/Urdu sermons, poetry and nasheed.
+export const REARRANGE_SYSTEM_PROMPT = `You are a multilingual subtitle editor, especially skilled in Arabic, Urdu, and English lectures, sermons, poetry and nasheed.
 Read the timeline in chronological order. Speech entries contain ORIGINAL words and timestamps in seconds, not existing subtitle segments.
-Split each speech block into natural, readable units of meaning. Prefer complete clauses, coherent poetic lines and natural punctuation.
-Avoid separating a particle, preposition, negation or conjunction from its complement, or leaving a tiny orphan fragment when a balanced alternative fits.
-Never rewrite, add, or omit any word. Respect preferences.maxWords and preferences.maxDuration (seconds); a single prolonged spoken/sung word may exceed maxDuration.
-Use the measured word start/end values to assess duration and pauses.
-Return JSON only: {"blocks":[{"id":0,"ends":[4,8]}]}.
+Split each speech block into natural, readable units of meaning of approximately 8–12 words (6–14 words when needed for complete grammar; shorter only for standalone sentences or expressions).
+Combine linguistic structure AND measured audio pauses (s/e timestamps):
+- Prefer complete grammatical clauses, meaningful noun/verb phrases, and natural speaking pauses (>=0.35s).
+- Do NOT break at every tiny hesitation mid-phrase, and NEVER sacrifice readability for rigid word counts.
+- NEVER separate articles (the, a, an) from their nouns, prepositions/postpositions (in, on, of, to, towards, في, من, على, کو, میں, سے, کا, کی, کے) from their complements, auxiliary verbs from main verbs, names from titles/honorifics (Prophet Muhammad ﷺ, صلى الله عليه وسلم), or dependent words from what completes them.
+Never rewrite, add, or omit any word. Respect preferences.maxWords and preferences.maxDuration (seconds).
+Return JSON only: {"blocks":[{"id":0,"ends":[8,19]}]}.
 Return exactly one object for every input speech block, in input order, with its unchanged id.
-ends are strictly increasing EXCLUSIVE word counts local to that block (equivalently the 1-based index of each segment's last word). The final end MUST equal that block's word count.`;
+ends are strictly increasing EXCLUSIVE word counts local to that block (1-based index of each segment's last word). The final end MUST equal that block's word count.`;
 
 export const CORRECT_TRANSCRIPTION_SYSTEM_PROMPT = `You are a conservative multilingual speech-to-text proofreader, especially familiar with Arabic/Urdu sermons, poetry and nasheed.
 Read all subtitles and their surrounding context. You have TEXT ONLY, not the recording: never claim to have heard or verified the audio.
@@ -130,80 +132,361 @@ export function cleanWordList(g) {
     .filter((w) => w.w);
 }
 
-/**
- * Minbar-caption style boundary splitter:
- * - Honors maxWords (default 8), maxChars, and maxDur without splitting a single long word
- * - Looks back for the strongest boundary score (punctuation + silence gap >= 0.25s)
- */
-export function splitByLimits(words, maxChars = 42, maxWords = 8, maxDur = 6, nextId = () => Date.now() + Math.random()) {
-  if (!words.length) return [];
-  const out = [];
-  let start = 0;
+const GLUE_TRAILING = new Set([
+  'a', 'an', 'the', 'this', 'that', 'these', 'those', 'my', 'your', 'his', 'her', 'its', 'our', 'their',
+  'some', 'any', 'no', 'every', 'each', 'another', 'such',
+  'of', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'to', 'into', 'onto', 'upon', 'about',
+  'between', 'among', 'through', 'towards', 'toward', 'under', 'over', 'against', 'during', 'without', 'within',
+  'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+  'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
+  'and', 'or', 'but', 'nor', 'yet', 'so', 'if', 'because', 'since', 'while', 'when', 'where',
+  'who', 'whom', 'whose', 'which', 'although', 'though', 'unless', 'until',
+  'prophet', 'imam', 'sheikh', 'shaykh', 'ustadh', 'ustad', 'maulana', 'hazrat', 'saint', 'dr', 'mr', 'mrs',
+  'في', 'من', 'إلى', 'الى', 'على', 'عن', 'مع', 'عند', 'بين', 'حتى', 'أن', 'إن', 'أنّ', 'إنّ',
+  'لا', 'لم', 'لن', 'قد', 'ما', 'هذا', 'هذه', 'ذلك', 'تلك', 'يا', 'عبد', 'بن', 'ابن', 'أبو', 'ابو', 'أبي', 'ابي',
+  'رسول', 'نبي', 'صلى', 'عليه', 'رضي', 'عنها', 'و', 'أو', 'ثم', 'لكن', 'لأن', 'بل',
+  'اور', 'یا', 'لیکن', 'مگر', 'کیونکہ', 'کہ', 'جب', 'اگر', 'تاکہ', 'چونکہ', 'حضرت', 'نبی', 'کریم', 'رسول', 'مولانا',
+]);
 
-  while (start < words.length) {
-    let cut = start + 1;
-    let chars = words[start].w.length;
+const CLAUSE_STARTERS = new Set([
+  'and', 'or', 'but', 'because', 'since', 'while', 'when', 'where', 'which', 'that', 'who', 'whom', 'whose',
+  'so', 'then', 'therefore', 'however', 'to', 'towards', 'toward', 'for', 'with', 'from', 'upon', 'into',
+  'without', 'within', 'through', 'during', 'before', 'after', 'until', 'unless', 'although',
+  'و', 'ف', 'ثم', 'أو', 'او', 'بل', 'لكن', 'لأن', 'لان', 'الذي', 'التي', 'الذين', 'حتى', 'من', 'إلى', 'الى', 'على', 'في',
+  'اور', 'یا', 'لیکن', 'مگر', 'کیونکہ', 'کہ', 'جو', 'جس', 'جب', 'تو', 'تاکہ', 'پھر',
+]);
 
-    while (cut < words.length) {
-      const w = words[cut];
-      const nextChars = chars + 1 + w.w.length;
-      const nextWords = cut - start + 1;
-      const nextDur = w.e - words[start].s;
-      const gap = w.s - words[cut - 1].e;
+const PHRASE_HEAD_DET = new Set(['the', 'a', 'an', 'this', 'that', 'these', 'those', 'his', 'her', 'their', 'our', 'your', 'my']);
 
-      if (maxWords > 0 && nextWords > maxWords) break;
-      if (maxChars > 0 && nextChars > maxChars) break;
-      if (maxDur > 0 && nextDur > maxDur) break;
-      if (gap >= 0.85 && cut - start >= 2) break;
+const URDU_POSTPOSITIONS = new Set([
+  'نے', 'کو', 'سے', 'میں', 'پر', 'کا', 'کی', 'کے', 'تک', 'لیے', 'لئے', 'والا', 'والی', 'والے',
+  'ہے', 'ہیں', 'تھا', 'تھی', 'تھے', 'ہو', 'ہوں', 'گا', 'گی', 'گے', 'گیا', 'گئی', 'گئے',
+]);
 
-      chars = nextChars;
-      cut++;
+const HONORIFIC_NEXT = new Set(['ﷺ', '(pbuh)', 'pbuh', '(saw)', '(saww)', '(ra)', '(as)', 'تعالى', 'سبحانه', 'عليه', 'وسلم']);
+
+const normTok = (raw) =>
+  String(raw || '')
+    .toLowerCase()
+    .replace(/^[\s"'“”‘’(\[{«]+|[\s"'“”‘’)\]}.!?؟،,;؛:…۔»]+$/gu, '')
+    .trim();
+
+const isSentencePunct = (w) => /[.!?؟۔…।]$/u.test(String(w || '').trim());
+const isClausePunct = (w) => /[,،;؛:—–-]$/u.test(String(w || '').trim());
+
+function scoreBoundaryTransition(words, i, j, prefMin, prefMax, accMin, maxChars, maxDur) {
+  const n = j - i;
+  const dur = words[j - 1].e - words[i].s;
+  const chars = words.slice(i, j).reduce((sum, x) => sum + x.w.length, 0) + Math.max(0, n - 1);
+  const gap = j < words.length ? Math.max(0, words[j].s - words[j - 1].e) : 0;
+  const endPunct = isSentencePunct(words[j - 1].w);
+  const clausePunct = isClausePunct(words[j - 1].w);
+  const startsFresh = i === 0 || isSentencePunct(words[i - 1].w) || Math.max(0, words[i].s - words[i - 1].e) >= 0.65;
+
+  let score = 0;
+
+  const targetMid = (prefMin + prefMax) * 0.5;
+  if (n >= prefMin && n <= prefMax) {
+    score += 4.6 - Math.abs(n - targetMid) * 0.25;
+  } else if (n >= accMin && n <= prefMax + 2) {
+    score += 1.6 - Math.abs(n - targetMid) * 0.2;
+  } else if (n < accMin) {
+    const validShortSentence = startsFresh && (endPunct || j === words.length || gap >= 0.65) && n >= 2;
+    score += validShortSentence ? 2.8 : -4.8 * (accMin - n);
+  } else {
+    score -= (n - prefMax) * 1.4;
+  }
+
+  if (maxChars > 0 && chars > maxChars) score -= (chars - maxChars) * 0.32;
+  if (maxDur > 0 && dur > maxDur) score -= (dur - maxDur) * 1.6;
+
+  if (j < words.length) {
+    const rawPrev = words[j - 1].w;
+    const rawNext = words[j].w;
+    const prev = normTok(rawPrev);
+    const next = normTok(rawNext);
+
+    if (endPunct) score += 9.5;
+    else if (clausePunct) score += 4.8;
+
+    if (gap >= 0.7) score += 6.2;
+    else if (gap >= 0.35) score += 3.6;
+    else if (gap >= 0.18 && n >= accMin) score += 1.3;
+
+    if (!endPunct) {
+      if (GLUE_TRAILING.has(prev)) score -= 7.8;
+      if (HONORIFIC_NEXT.has(next) || rawNext.includes('ﷺ')) score -= 9.5;
+      if (prev === 'prophet' && /^muhammad/i.test(next)) score -= 9.0;
+      if (URDU_POSTPOSITIONS.has(next)) score -= 7.2;
+      if (CLAUSE_STARTERS.has(next) && n >= 4) score += 2.9;
+      else if (PHRASE_HEAD_DET.has(next) && !GLUE_TRAILING.has(prev) && n >= Math.max(5, accMin)) score += 1.4;
     }
+  }
 
-    // Look back slightly to align splits with punctuation or natural speech pauses when mid-block
-    if (cut < words.length && cut - start >= 3) {
-      let bestScore = 0;
-      const minKeep = start + Math.max(2, Math.floor((cut - start) * 0.45));
-      for (let i = minKeep; i <= cut; i++) {
-        const gap = Math.max(0, words[i].s - words[i - 1].e);
-        const punct = /[.!?؟،,;؛:…۔]$/u.test(words[i - 1].w) ? 2.0 : 0;
-        const score = punct + (gap >= 0.25 ? Math.min(1.5, gap) : 0);
-        if (score >= bestScore && score > 0) {
-          bestScore = score;
-          cut = i;
-        }
+  return score;
+}
+
+function segmentRunWithDP(run, maxChars, maxWords, maxDur, nextId) {
+  if (!run.length) return [];
+  const rawMaxW = Number(maxWords) || 0;
+  const strictCeiling = rawMaxW > 0 && rawMaxW <= 9;
+  const prefMin = rawMaxW > 0 ? (strictCeiling ? Math.min(rawMaxW, Math.max(4, rawMaxW - 2)) : Math.max(6, Math.min(8, rawMaxW - 2))) : 8;
+  const prefMax = rawMaxW > 0 ? rawMaxW : 12;
+  const accMin = Math.max(3, prefMin - 2);
+  const hardMaxW = rawMaxW > 0 ? (strictCeiling ? rawMaxW : Math.max(prefMax + 2, 14)) : 16;
+
+  if (run.length <= hardMaxW) {
+    const singleChars = run.reduce((s, x) => s + x.w.length, 0) + Math.max(0, run.length - 1);
+    const singleDur = run[run.length - 1].e - run[0].s;
+    const fitsMaxC = !maxChars || singleChars <= maxChars;
+    const fitsMaxW = strictCeiling ? run.length <= rawMaxW : run.length <= prefMax;
+    const fitsDur = !maxDur || singleDur <= maxDur;
+    if (fitsMaxW && fitsMaxC && fitsDur) {
+      const rs = run[0].s;
+      const re = run[run.length - 1].e;
+      return [{
+        id: nextId(),
+        s: rs,
+        e: re,
+        rawS: rs,
+        rawE: re,
+        t: normalizeArabicSubtitlePunctuation(run.map((w) => w.w).join(' ')),
+        words: run.map((w) => ({ w: w.w, s: w.s, e: w.e })),
+      }];
+    }
+  }
+
+  const N = run.length;
+  const dp = new Float64Array(N + 1).fill(-1e12);
+  const prev = new Int32Array(N + 1).fill(-1);
+  dp[0] = 0;
+
+  for (let i = 0; i < N; i++) {
+    if (dp[i] < -1e11) continue;
+    let charAcc = 0;
+    const maxJ = Math.min(N, i + hardMaxW);
+    for (let j = i + 1; j <= maxJ; j++) {
+      charAcc += (j > i + 1 ? 1 : 0) + run[j - 1].w.length;
+      const wCount = j - i;
+      const segDur = run[j - 1].e - run[i].s;
+      if (strictCeiling && wCount > rawMaxW) break;
+      if (wCount > 1 && maxChars > 0 && charAcc > maxChars * 1.45) break;
+      if (wCount > 1 && maxDur > 0 && segDur > maxDur * 1.5) break;
+
+      const sVal = dp[i] + scoreBoundaryTransition(run, i, j, prefMin, prefMax, accMin, maxChars, maxDur);
+      if (sVal > dp[j]) {
+        dp[j] = sVal;
+        prev[j] = i;
       }
     }
+    if (prev[i + 1] < 0) {
+      dp[i + 1] = dp[i] - 50;
+      prev[i + 1] = i;
+    }
+  }
 
-    const part = words.slice(start, cut);
-    const rawS = part[0].s;
-    const rawE = part[part.length - 1].e;
-    const joined = normalizeArabicSubtitlePunctuation(part.map((w) => w.w).join(' '));
+  const cuts = [];
+  for (let cur = N; cur > 0; cur = prev[cur]) cuts.push(cur);
+  cuts.reverse();
+
+  const out = [];
+  let start = 0;
+  for (const end of cuts) {
+    const part = run.slice(start, end);
+    start = end;
+    if (!part.length) continue;
+    const rs = part[0].s;
+    const re = part[part.length - 1].e;
     out.push({
       id: nextId(),
-      s: rawS,
-      e: rawE,
-      rawS,
-      rawE,
-      t: joined,
+      s: rs,
+      e: re,
+      rawS: rs,
+      rawE: re,
+      t: normalizeArabicSubtitlePunctuation(part.map((w) => w.w).join(' ')),
       words: part.map((w) => ({ w: w.w, s: w.s, e: w.e })),
     });
-    start = cut;
+  }
+  return out;
+}
+
+/**
+ * Intelligent Linguistic & Pause Segmentation Engine:
+ * - Preferred 8-12 words per segment (flexible 6-14 to preserve phrases/meaning)
+ * - Uses Dynamic Programming to align boundaries with sentence structure,
+ *   natural pauses, and grammatical integrity across English, Arabic, and Urdu.
+ */
+export function splitByLimits(words, maxChars = 84, maxWords = 12, maxDur = 8, nextId = () => Date.now() + Math.random()) {
+  if (!words?.length) return [];
+  const out = [];
+  let runStart = 0;
+  for (let i = 1; i <= words.length; i++) {
+    const atEnd = i === words.length;
+    const hardPause = !atEnd && words[i].s - words[i - 1].e >= 1.25;
+    const safeSentenceChunk = !atEnd && i - runStart >= 85 && isSentencePunct(words[i - 1].w);
+    const maxChunk = !atEnd && i - runStart >= 140;
+    if (atEnd || hardPause || safeSentenceChunk || maxChunk) {
+      out.push(...segmentRunWithDP(words.slice(runStart, i), maxChars, maxWords, maxDur, nextId));
+      runStart = i;
+    }
+  }
+  return out;
+}
+
+function cleanWordTimingSlice(ws, s, e, text) {
+  const cleaned = (ws || [])
+    .filter((w) => w && String(w.w || '').replace(/\|/g, '').trim())
+    .map((w) => ({ w: String(w.w).replace(/\|/g, '').trim(), s: Number(w.s) || 0, e: Math.max((Number(w.s) || 0) + 0.02, Number(w.e) || (Number(w.s) || 0) + 0.2) }));
+  return cleaned.length ? cleaned : synthWords({ s, e, t: text });
+}
+
+function sliceProportionalWords(text, weights, totalW) {
+  if (!text) return weights.map(() => '');
+  const tokens = String(text).trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return weights.map(() => '');
+  if (weights.length <= 1) return [tokens.join(' ')];
+  const out = [];
+  let cursor = 0;
+  let accW = 0;
+  for (let k = 0; k < weights.length; k++) {
+    accW += weights[k];
+    const targetEnd = k === weights.length - 1 ? tokens.length : Math.max(cursor, Math.min(tokens.length, Math.round((accW / Math.max(1e-6, totalW)) * tokens.length)));
+    out.push(tokens.slice(cursor, targetEnd).join(' '));
+    cursor = targetEnd;
+  }
+  return out;
+}
+
+export function splitCueByPipe(cue, nextId = () => Date.now() + Math.random()) {
+  if (!cue) return [];
+  const rawT = String(cue.t || '');
+  const rawTr = cue.tr !== undefined ? String(cue.tr) : undefined;
+  const hasPipeInT = rawT.includes('|');
+  const hasPipeInTr = rawTr !== undefined && rawTr.includes('|');
+
+  if (!hasPipeInT && !hasPipeInTr) return [cue];
+
+  const cleanPart = (p) => p.replace(/[ \t]+/g, ' ').trim();
+  const baseParts = hasPipeInT ? rawT.split('|').map(cleanPart).filter(Boolean) : [];
+  const trPipeParts = hasPipeInTr ? rawTr.split('|').map(cleanPart).filter(Boolean) : null;
+
+  const count = baseParts.length >= 2 ? baseParts.length : trPipeParts && trPipeParts.length >= 2 ? trPipeParts.length : 1;
+  if (count <= 1) {
+    return [{
+      ...cue,
+      t: rawT.replace(/\|/g, ' ').replace(/[ \t]+/g, ' ').trim(),
+      ...(rawTr !== undefined ? { tr: rawTr.replace(/\|/g, ' ').replace(/[ \t]+/g, ' ').trim() } : {}),
+    }];
+  }
+
+  const rs = Number(cue.rawS !== undefined ? cue.rawS : cue.s) || 0;
+  const re = Math.max(rs + 0.05 * count, Number(cue.rawE !== undefined ? cue.rawE : cue.e) || rs + 2);
+  const segTexts = baseParts.length === count ? baseParts : sliceProportionalWords(rawT.replace(/\|/g, ' '), trPipeParts.map((p) => p.length + 4), trPipeParts.reduce((s, p) => s + p.length + 4, 0));
+
+  const partTokenLists = segTexts.map((txt) => txt.trim().split(/\s+/).filter(Boolean));
+  const totalPartTokens = partTokenLists.reduce((sum, arr) => sum + arr.length, 0);
+
+  const weights = partTokenLists.map((toks, idx) => toks.length * 2.2 + segTexts[idx].replace(/\s+/g, '').length * 0.45 + 0.5);
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
+
+  const existingWs = (cue.words || cue.w || [])
+    .filter((w) => w && String(w.w || '').replace(/\|/g, '').trim())
+    .map((w) => ({ w: String(w.w).replace(/\|/g, '').trim(), s: Number(w.s) || 0, e: Math.max((Number(w.s) || 0) + 0.02, Number(w.e) || (Number(w.s) || 0) + 0.15) }));
+  const exactWordMatch = existingWs.length > 0 && existingWs.length === totalPartTokens;
+
+  let origSegs = null;
+  if (cue.orig !== undefined) {
+    const rawOrig = String(cue.orig);
+    if (rawOrig.includes('|')) {
+      const op = rawOrig.split('|').map(cleanPart).filter(Boolean);
+      origSegs = op.length === count ? op : sliceProportionalWords(rawOrig.replace(/\|/g, ' '), weights, totalWeight);
+    } else {
+      origSegs = sliceProportionalWords(rawOrig, weights, totalWeight);
+    }
+  }
+
+  let trSegs = null;
+  if (rawTr !== undefined) {
+    if (trPipeParts && trPipeParts.length === count) trSegs = trPipeParts;
+    else trSegs = sliceProportionalWords(rawTr.replace(/\|/g, ' '), weights, totalWeight);
+  }
+
+  const out = [];
+  let tokCursor = 0;
+  let timeCursor = rs;
+  let weightAcc = 0;
+
+  for (let k = 0; k < count; k++) {
+    const toks = partTokenLists[k];
+    const segText = normalizeArabicSubtitlePunctuation(segTexts[k]);
+    let segS;
+    let segE;
+    let segWords;
+
+    if (exactWordMatch) {
+      segWords = existingWs.slice(tokCursor, tokCursor + toks.length);
+      tokCursor += toks.length;
+      segS = k === 0 ? Math.min(rs, segWords[0]?.s ?? rs) : Math.max(timeCursor, segWords[0]?.s ?? timeCursor);
+      segE = k === count - 1 ? Math.max(re, segWords[segWords.length - 1]?.e ?? segS + 0.15) : Math.max(segS + 0.05, segWords[segWords.length - 1]?.e ?? segS + 0.25);
+      if (k < count - 1 && existingWs[tokCursor]) {
+        const nextWordS = existingWs[tokCursor].s;
+        if (nextWordS > segE && nextWordS - segE < 0.12) {
+          segE = (segE + nextWordS) * 0.5;
+        }
+      }
+      timeCursor = segE;
+    } else {
+      segS = timeCursor;
+      weightAcc += weights[k];
+      segE = k === count - 1 ? re : +(rs + ((re - rs) * weightAcc) / totalWeight).toFixed(3);
+      segE = Math.max(segS + 0.08, Math.min(re - 0.08 * (count - 1 - k), segE));
+      timeCursor = segE;
+      segWords = cleanWordTimingSlice(null, segS, segE, segText);
+    }
+
+    const piece = {
+      ...cue,
+      id: k === 0 && cue.id !== undefined ? cue.id : nextId(),
+      s: +segS.toFixed(3),
+      e: +segE.toFixed(3),
+      rawS: +segS.toFixed(3),
+      rawE: +segE.toFixed(3),
+      t: segText,
+      words: segWords,
+      ...(cue.st ? { st: JSON.parse(JSON.stringify(cue.st)) } : {}),
+    };
+    if (origSegs) piece.orig = origSegs[k];
+    if (trSegs) piece.tr = trSegs[k];
+    if (k > 0) delete piece.trIssue;
+    out.push(piece);
   }
 
   return out;
 }
 
-export function segsToSubs(segs, maxChars = 42, maxWords = 8, maxDur = 6, nextId) {
+export function expandAllPipeSubtitles(subs, nextId = () => Date.now() + Math.random()) {
   const out = [];
+  for (const cue of subs || []) {
+    out.push(...splitCueByPipe(cue, nextId));
+  }
+  return out;
+}
+
+export function segsToSubs(segs, maxChars = 84, maxWords = 12, maxDur = 8, nextId) {
+  const rawList = [];
   const hasLimits = maxChars > 0 || maxWords > 0 || maxDur > 0;
   for (const g of segs || []) {
+    if (String(g.t || '').includes('|')) {
+      const pipeParts = splitCueByPipe({ ...g, words: g.w || g.words }, nextId);
+      rawList.push(...pipeParts);
+      continue;
+    }
     const ws = cleanWordList(g);
     if (!ws.length) {
       const rs = Number(g.s) || 0;
       const re = Number(g.e) || 0;
       if ((g.t || '').trim()) {
-        out.push({
+        rawList.push({
           id: nextId(),
           s: rs,
           e: re,
@@ -215,22 +498,41 @@ export function segsToSubs(segs, maxChars = 42, maxWords = 8, maxDur = 6, nextId
       }
       continue;
     }
-    if (hasLimits) {
-      out.push(...splitByLimits(ws, maxChars, maxWords, maxDur, nextId));
-    } else {
-      const rs = Number(g.s) || ws[0].s;
-      const re = Number(g.e) || ws[ws.length - 1].e;
-      out.push({
-        id: nextId(),
-        s: rs,
-        e: re,
-        rawS: rs,
-        rawE: re,
-        t: normalizeArabicSubtitlePunctuation(ws.map((w) => w.w).join(' ')),
-        words: ws,
-      });
-    }
+    rawList.push({
+      id: nextId(),
+      s: Number(g.s) || ws[0].s,
+      e: Number(g.e) || ws[ws.length - 1].e,
+      rawS: Number(g.s) || ws[0].s,
+      rawE: Number(g.e) || ws[ws.length - 1].e,
+      t: normalizeArabicSubtitlePunctuation(ws.map((w) => w.w).join(' ')),
+      words: ws,
+    });
   }
+
+  if (!hasLimits) return rawList;
+
+  const out = [];
+  let bufWords = [];
+  const flushWords = () => {
+    if (!bufWords.length) return;
+    out.push(...splitByLimits(bufWords, maxChars, maxWords, maxDur, nextId));
+    bufWords = [];
+  };
+
+  for (const item of rawList) {
+    if (!item.words?.length) {
+      flushWords();
+      out.push(item);
+      continue;
+    }
+    const prevLast = bufWords.length ? bufWords[bufWords.length - 1] : null;
+    const firstNew = item.words[0];
+    const gap = prevLast ? firstNew.s - prevLast.e : 0;
+    const prevEndedSentence = prevLast && isSentencePunct(prevLast.w);
+    if (prevLast && (gap >= 1.1 || prevEndedSentence)) flushWords();
+    bufWords.push(...item.words);
+  }
+  flushWords();
   return out;
 }
 
@@ -297,8 +599,8 @@ export function mergeSentenceSubtitles(items, limits = {}) {
   const out = [];
   const ends = /[.!?؟۔…:;؛।]$/;
   const maxC = Number(limits.maxChars) || 0;
-  const maxW = Number(limits.maxWords) || 8;
-  const maxD = Number(limits.maxDur) || 9;
+  const maxW = Number(limits.maxWords) || 12;
+  const maxD = Number(limits.maxDur) || 8;
 
   for (const raw of items || []) {
     const cur = { ...raw, t: String(raw.t || '').trim() };
@@ -308,13 +610,16 @@ export function mergeSentenceSubtitles(items, limits = {}) {
       continue;
     }
     const prev = out[out.length - 1];
+    const prevWords = prev.t.split(/\s+/).filter(Boolean).length;
+    const curWords = cur.t.split(/\s+/).filter(Boolean).length;
     const gap = Math.max(0, (Number(cur.rawS ?? cur.s) || 0) - (Number(prev.rawE ?? prev.e) || 0));
     const comb = (prev.t + ' ' + cur.t).replace(/\s+/g, ' ').trim();
     const words = comb.split(/\s+/);
     const overChars = maxC > 0 && comb.length > maxC;
     const overWords = maxW > 0 && words.length > maxW;
     const overDur = (Number(cur.rawE ?? cur.e) - Number(prev.rawS ?? prev.s)) > maxD;
-    if (ends.test(prev.t) || gap >= 0.85 || overChars || overWords || overDur) {
+    const needsRepair = prevWords < 6 || curWords < 6;
+    if (!needsRepair || ends.test(prev.t) || gap >= 0.7 || overChars || overWords || overDur) {
       out.push(cur);
     } else {
       prev.t = comb;
@@ -441,7 +746,12 @@ export async function aiSemanticRearrange(subs, aiCfg, limits, onNote) {
   if (!words.length) throw new Error('No timed words available to rearrange.');
 
   const payload = {
-    preferences: { maxWords: limits.maxWords || 8, maxDuration: limits.maxDur || 6 },
+    preferences: {
+      preferredWordRange: '8-12',
+      acceptableWordRange: '6-14',
+      maxWords: limits.maxWords || 12,
+      maxDuration: limits.maxDur || 8,
+    },
     blocks: [
       {
         id: 0,

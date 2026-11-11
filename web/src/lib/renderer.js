@@ -71,26 +71,40 @@ const rr = (X, x, y, w, h, r) => {
   X.roundRect(x, y, Math.max(1, w), Math.max(1, h), Math.max(0, Math.min(r, w / 2, h / 2)));
 };
 
+function wrapSinglePara(X, para, maxW) {
+  const out = [];
+  let line = '';
+  for (const w of String(para || '').split(/\s+/).filter(Boolean)) {
+    const t = line ? line + ' ' + w : w;
+    if (X.measureText(t).width > maxW && line) {
+      out.push(line);
+      line = w;
+    } else {
+      line = t;
+    }
+  }
+  if (line || !out.length) out.push(line);
+  return out;
+}
+
 function wrapText(X, txt, maxW) {
   const out = [];
   for (const para of String(txt || '').split('\n')) {
-    let line = '';
-    for (const w of para.split(/\s+/)) {
-      const t = line ? line + ' ' + w : w;
-      if (X.measureText(t).width > maxW && line) {
-        out.push(line);
-        line = w;
-      } else {
-        line = t;
-      }
+    const greedy = wrapSinglePara(X, para, maxW);
+    if (greedy.length >= 2 && greedy.length <= 4) {
+      const fullW = X.measureText(para).width;
+      const balancedTarget = Math.min(maxW, Math.max(maxW * 0.52, (fullW / greedy.length) * 1.12));
+      const bal = wrapSinglePara(X, para, balancedTarget);
+      out.push(...(bal.length <= greedy.length ? bal : greedy));
+    } else {
+      out.push(...greedy);
     }
-    out.push(line);
   }
   return out;
 }
 
 function measureLines(X, txt, font, maxW, ls = 0) {
-  const k = font + '|' + maxW + '|' + ls + '|' + txt;
+  const k = font + '|' + Math.round(maxW) + '|' + ls + '|' + txt;
   let r = wc.get(k);
   if (!r) {
     X.font = font;
@@ -107,16 +121,41 @@ function measureLines(X, txt, font, maxW, ls = 0) {
 function prep(X, o, txt, maxW, fit) {
   txt = clean(o.upper ? txt.toUpperCase() : txt);
   let size = o.size;
+  let lh = fit?.lh || Number(o.lh) || 1.3;
+  let padY = fit?.padY ?? (o.bga > 0 ? Math.max(0, Number(o.padY ?? 14)) : 0);
+  const origLh = lh;
+  const origPadY = padY;
   let font;
   let r;
-  const hasFit = fit && fit.max > 0;
+  const hasFitLines = fit && fit.max > 0;
+  const hasFitH = fit && fit.maxBoxH > 0;
+  const step = fit?.step || 3;
+  const prefMin = fit?.min ?? 24;
+  const hardMin = fit?.hardMin ?? 14;
+  const ls = isRtl(txt) ? 0 : o.ls || 0;
+
   for (;;) {
     font = `${o.bold ? '700 ' : ''}${size}px ${o.font}`;
-    r = measureLines(X, txt, font, maxW, isRtl(txt) ? 0 : o.ls || 0);
-    if (!hasFit || r.L.length <= fit.max || size - fit.step < fit.min) break;
-    size -= fit.step;
+    r = measureLines(X, txt, font, maxW, ls);
+    const boxH = r.L.length * size * lh + padY * 2;
+    const overLines = hasFitLines && r.L.length > fit.max;
+    const overHeight = hasFitH && boxH > fit.maxBoxH;
+    if (!overLines && !overHeight) break;
+    const minBound = overHeight ? hardMin : prefMin;
+    if (size - step >= minBound) {
+      size -= step;
+      if (overHeight && size < o.size * 0.78) {
+        lh = Math.max(1.06, origLh * 0.88);
+        padY = Math.min(origPadY, Math.round(size * 0.16));
+      }
+    } else if (overHeight && lh > 1.06) {
+      lh = Math.max(1.06, +(lh - 0.05).toFixed(2));
+      padY = Math.min(padY, Math.max(2, Math.round(origPadY * 0.5)));
+    } else {
+      break;
+    }
   }
-  return { font, size, L: r.L, W: r.W, ls: isRtl(txt) ? 0 : o.ls || 0 };
+  return { font, size, L: r.L, W: r.W, ls, lh, padY };
 }
 
 function paint(X, LW, sc, o, p, x, y, lhk = 1.2, alpha = 1, hl = null) {
@@ -130,7 +169,13 @@ function paint(X, LW, sc, o, p, x, y, lhk = 1.2, alpha = 1, hl = null) {
   const align = o.align || 'center';
   const rtl = isRtl(L.join(''));
   const edgePad = LW * (cl(Number(o.marginX ?? 6), 0, 25) / 100);
-  const drawX = align === 'left' ? Math.max(edgePad, x - W / 2) : align === 'right' ? Math.min(LW - edgePad, x + W / 2) : x;
+  const outerHalf = o.boxOuterW ? o.boxOuterW / 2 : W / 2;
+  const drawX =
+    align === 'left'
+      ? Math.max(edgePad + (box ? padX : 0), x - outerHalf + (box ? padX : 0))
+      : align === 'right'
+        ? Math.min(LW - edgePad - (box ? padX : 0), x + outerHalf - (box ? padX : 0))
+        : x;
 
   X.font = font;
   X.textAlign = align;
@@ -155,15 +200,21 @@ function paint(X, LW, sc, o, p, x, y, lhk = 1.2, alpha = 1, hl = null) {
     X.shadowOffsetY = 0;
   };
 
+  const bw = Math.min(LW - edgePad * 2, W + padX * 2);
+  const boxX0 =
+    align === 'left'
+      ? cl(drawX - padX, edgePad, LW - edgePad - bw)
+      : align === 'right'
+        ? cl(drawX + padX - bw, edgePad, LW - edgePad - bw)
+        : cl(x - bw / 2, edgePad, LW - edgePad - bw);
+
   if (box && o.boxMode !== 'line') {
-    const bw = Math.min(LW - edgePad * 2, W + padX * 2);
     const bh = H + padY * 2;
-    const bx0 = cl(x - bw / 2, edgePad, LW - edgePad - bw);
     const by0 = y - bh / 2;
     sh();
     X.globalAlpha = (alpha * o.bga) / 100;
     X.fillStyle = o.bg;
-    rr(X, bx0, by0, bw, bh, boxR);
+    rr(X, boxX0, by0, bw, bh, boxR);
     X.fill();
     X.globalAlpha = alpha;
     nosh();
@@ -235,7 +286,7 @@ function paint(X, LW, sc, o, p, x, y, lhk = 1.2, alpha = 1, hl = null) {
   X.direction = 'ltr';
   X.letterSpacing = '0px';
   X.textAlign = 'center';
-  return { x: cl(x - W / 2 - padX, 0, LW), y: Math.max(0, y - H / 2 - padY), w: Math.min(LW, W + padX * 2), h: H + padY * 2 };
+  return { x: boxX0, y: Math.max(0, y - H / 2 - padY), w: bw, h: H + padY * 2 };
 }
 
 function getSrc(S = studio) {
@@ -1489,6 +1540,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
   }
 
   S.subBox = null;
+  S.subMaxBox = null;
   S.duSourceBox = null;
   S.duTransBox = null;
   S.act = null;
@@ -1513,17 +1565,46 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
     const [part, cs] = partFor(a, t);
     const col = a.st && a.st.color !== undefined ? a.st.color : st.acc ? th.accent : st.color;
     const marginPct = cl(Number(st.marginX ?? 6), 0, 25) / 100;
-    const maxSubW = Math.min((W * st.w) / 100, W * (1 - marginPct * 2));
+    const resScale = Math.min(W, H) / 1080;
+    const reqMaxW =
+      st.wUnit === 'px'
+        ? Math.max(180, (Number(st.wPx) || 880) * resScale)
+        : (W * cl(Number(st.w ?? 82), 20, 98)) / 100;
+    const outerMaxW = Math.min(reqMaxW, W * (1 - marginPct * 2));
+    const boxActive = (Number(st.bga) || 0) > 0;
+    const initPadX = boxActive ? Math.max(0, Number(st.padX ?? Math.round(st.size * 0.32))) : 0;
+    const initPadY = boxActive ? Math.max(0, Number(st.padY ?? Math.round(st.size * 0.18))) : 0;
+    const innerMaxW = Math.max(80, outerMaxW - initPadX * 2);
     const maxLines = Math.max(0, Number(st.maxLines ?? 3));
-    const minFit = Math.max(18, Number(st.minSize ?? 36));
-    const p = prep(X, st, part, maxSubW, st.fit && maxLines > 0 ? { max: maxLines, min: minFit, step: 3 } : null);
-    const padY = st.bga > 0 ? Math.max(0, Number(st.padY ?? 14)) : 0;
-    const Hh = p.L.length * p.size * st.lh + padY * 2;
+    const maxBoxH =
+      st.hUnit === 'px'
+        ? Number(st.maxHPx) > 0
+          ? Math.min(H * 0.85, Number(st.maxHPx) * resScale)
+          : 0
+        : Number(st.maxH) > 0
+          ? (H * cl(Number(st.maxH), 5, 85)) / 100
+          : 0;
+    const minFit = Math.max(16, Number(st.minSize ?? 36));
+    const p = prep(X, st, part, innerMaxW, {
+      max: st.fit && maxLines > 0 ? maxLines : 0,
+      min: minFit,
+      hardMin: 14,
+      step: 2,
+      maxBoxH,
+      lh: Number(st.lh) || 1.3,
+      padY: initPadY,
+    });
+    const effLh = p.lh || st.lh || 1.3;
+    const effPadY = boxActive ? p.padY : 0;
+    const Hh = p.L.length * p.size * effLh + effPadY * 2;
     const dualPairedActive = S.du.on && S.du.dualMode !== 'split' && S.du.showTranslation !== false && !!a.tr;
 
     if (!dualPairedActive) {
+      const edgeMargin = W * marginPct;
+      const centerX = cl((cl(Number(st.x ?? 50), 10, 90) / 100) * W, edgeMargin + outerMaxW / 2, W - edgeMargin - outerMaxW / 2);
+      const effMaxH = maxBoxH > 0 ? maxBoxH : Math.max(Hh, Math.round(H * 0.14));
       let cy;
-      if (!st.auto || (a.st && a.st.y !== undefined)) cy = (st.y / 100) * H;
+      if (!st.auto || (a.st && a.st.y !== undefined)) cy = cl((st.y / 100) * H, Hh / 2 + 8, H - Hh / 2 - 8);
       else {
         const safeY = Math.max(8, Number(st.marginY ?? 24));
         const bot = H - (S.wm.on ? 140 : 36) - safeY;
@@ -1531,6 +1612,17 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
         const av = Math.max(10, bot - top);
         cy = Math.max(top + Hh / 2, Math.min(top + av / 2, bot - Hh / 2));
       }
+      const mbLeft = cl(centerX - outerMaxW / 2, edgeMargin, W - edgeMargin - outerMaxW);
+      const mbTop = cl(cy - effMaxH / 2, 12, H - 12 - effMaxH);
+      S.subMaxBox = {
+        x: mbLeft,
+        y: mbTop,
+        w: outerMaxW,
+        h: effMaxH,
+        cx: mbLeft + outerMaxW / 2,
+        cy: mbTop + effMaxH / 2,
+        autoH: maxBoxH <= 0,
+      };
       const k = st.anim === 'none' ? 1 : Math.min(1, Math.max(0, t - cs) / 0.32);
       const e = 1 - Math.pow(1 - k, 3);
       X.save();
@@ -1543,9 +1635,9 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
         cy += 36 * (1 - e);
       } else if (st.anim === 'pop') {
         const q = 0.82 + 0.18 * e;
-        X.translate(W / 2, cy);
+        X.translate(centerX, cy);
         X.scale(q, q);
-        X.translate(-W / 2, -cy);
+        X.translate(-centerX, -cy);
       }
       const tk = part.split(/\s+/).filter(Boolean);
       let hl = null;
@@ -1554,7 +1646,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
         for (let q = 0; q < a.words.length; q++) if (a.words[q].s <= t) ix = q;
         hl = { idx: ix, color: st.hlc };
       }
-      S.subBox = paint(X, W, sc, { ...st, color: col }, p, W / 2, cy, st.lh, al, hl);
+      S.subBox = paint(X, W, sc, { ...st, color: col, boxOuterW: outerMaxW, ...(boxActive ? { padY: effPadY } : {}) }, p, centerX, cy, effLh, al, hl);
       X.restore();
     }
 
@@ -1564,6 +1656,30 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
       const anchor = studioMode && F.on ? { cy: cardB + sp.gap / 2 } : { bottom: S.subBox ? S.subBox.y - 12 : H * 0.72 };
       drawDual(X, W, H, sc, source, anchor, translated, S);
     }
+  } else if (!S.exporting && !S.sample && S.subBoxSelected) {
+    const st = S.st;
+    const marginPct = cl(Number(st.marginX ?? 6), 0, 25) / 100;
+    const edgeMargin = W * marginPct;
+    const resScale = Math.min(W, H) / 1080;
+    const reqMaxW =
+      st.wUnit === 'px'
+        ? Math.max(180, (Number(st.wPx) || 880) * resScale)
+        : (W * cl(Number(st.w ?? 82), 20, 98)) / 100;
+    const outerMaxW = Math.min(reqMaxW, W - edgeMargin * 2);
+    const maxBoxH =
+      st.hUnit === 'px'
+        ? Number(st.maxHPx) > 0
+          ? Math.min(H * 0.85, Number(st.maxHPx) * resScale)
+          : 0
+        : Number(st.maxH) > 0
+          ? (H * cl(Number(st.maxH), 5, 85)) / 100
+          : 0;
+    const effMaxH = maxBoxH > 0 ? maxBoxH : Math.round(H * 0.14);
+    const centerX = cl((cl(Number(st.x ?? 50), 10, 90) / 100) * W, edgeMargin + outerMaxW / 2, W - edgeMargin - outerMaxW / 2);
+    const cy = !st.auto ? (cl(Number(st.y ?? 80), 5, 95) / 100) * H : studioMode && F.on ? Math.min(H * 0.82, cardB + spkReservedH + 140) : H * 0.8;
+    const mbLeft = cl(centerX - outerMaxW / 2, edgeMargin, W - edgeMargin - outerMaxW);
+    const mbTop = cl(cy - effMaxH / 2, 12, H - 12 - effMaxH);
+    S.subMaxBox = { x: mbLeft, y: mbTop, w: outerMaxW, h: effMaxH, cx: mbLeft + outerMaxW / 2, cy: mbTop + effMaxH / 2, autoH: maxBoxH <= 0 };
   }
 
   for (const o of S.texts) {
@@ -1671,8 +1787,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
     else if (S.hoverLayer === 'overlay') {
       const ov = (S.mediaOverlays || []).find((q) => q.id === S.selectedOverlayId);
       if (ov?._box) drawHudBox(ov._box, `${ov.name} · Drag / Scroll scale`, '#06b6d4');
-    } else if (S.hoverLayer === 'sub') drawHudBox(S.subBox, 'Main Subtitle · Drag / Scroll size', '#ff3d81');
-    else if (S.hoverLayer === 'text') {
+    } else if (S.hoverLayer === 'text') {
       const tx = S.texts.find((q) => q.id === S.sel);
       if (tx?.box) drawHudBox(tx.box, 'Text Overlay · Drag', '#a855f7');
     }

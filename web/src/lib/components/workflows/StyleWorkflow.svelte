@@ -219,13 +219,37 @@
     <StyleFieldRow label="Box mode" type="select" value={studio.st.boxMode} options={[['block', 'Unified box'], ['line', 'Per-line pills']]} onchange={(v) => ((studio.st.boxMode = v), studio.inv())} />
     <StyleFieldRow label="Box color" type="color" value={studio.st.bg} onchange={(v) => ((studio.st.bg = v), studio.inv())} />
     <StyleFieldRow label="Box opacity" value={studio.st.bga} min={0} max={100} unit="%" onchange={(v) => ((studio.st.bga = v), studio.inv())} />
-    <StyleFieldRow label="Max width" value={studio.st.w} min={30} max={96} unit="%" onchange={(v) => ((studio.st.w = v), studio.inv())} />
-    <StyleFieldRow label="Max lines" type="select" value={studio.st.maxLines} options={[[1, '1 line'], [2, '2 lines'], [3, '3 lines'], [0, 'Unlimited']]} onchange={(v) => ((studio.st.maxLines = +v), studio.inv())} />
+    <StyleFieldRow
+      label="Width unit"
+      type="select"
+      value={studio.st.wUnit || '%'}
+      options={[['%', 'Video % (scales across formats)'], ['px', 'Pixels (1080p ref)']]}
+      onchange={(v) => ((studio.st.wUnit = v), studio.inv())}
+    />
+    {#if (studio.st.wUnit || '%') === 'px'}
+      <StyleFieldRow label="Max width" value={studio.st.wPx ?? 880} min={220} max={1800} step={10} unit="px" onchange={(v) => ((studio.st.wPx = v), studio.inv())} />
+    {:else}
+      <StyleFieldRow label="Max width" value={studio.st.w} min={25} max={96} unit="%" onchange={(v) => ((studio.st.w = v), studio.inv())} />
+    {/if}
+    <StyleFieldRow
+      label="Height unit"
+      type="select"
+      value={studio.st.hUnit || '%'}
+      options={[['%', 'Video % (0 = auto)'], ['px', 'Pixels (1080p ref, 0 = auto)']]}
+      onchange={(v) => ((studio.st.hUnit = v), studio.inv())}
+    />
+    {#if (studio.st.hUnit || '%') === 'px'}
+      <StyleFieldRow label="Max height" value={studio.st.maxHPx ?? 340} min={0} max={900} step={10} unit="px" onchange={(v) => ((studio.st.maxHPx = v), studio.inv())} />
+    {:else}
+      <StyleFieldRow label="Max height" value={studio.st.maxH ?? 26} min={0} max={65} unit="%" onchange={(v) => ((studio.st.maxH = v), studio.inv())} />
+    {/if}
+    <StyleFieldRow label="Max lines" type="select" value={studio.st.maxLines} options={[[1, '1 line'], [2, '2 lines'], [3, '3 lines'], [4, '4 lines'], [0, 'Unlimited']]} onchange={(v) => ((studio.st.maxLines = +v), studio.inv())} />
     <StyleFieldRow label="Auto-fit long" type="check" value={studio.st.fit} onchange={(v) => ((studio.st.fit = v ? 1 : 0), studio.inv())} />
     {#if studio.st.fit}
       <StyleFieldRow label="Min font size" value={studio.st.minSize} min={18} max={80} unit="px" onchange={(v) => ((studio.st.minSize = v), studio.inv())} />
     {/if}
     <StyleFieldRow label="Auto-track Y" type="check" value={studio.st.auto} onchange={(v) => ((studio.st.auto = v ? 1 : 0), studio.inv())} />
+    <StyleFieldRow label="Horizontal X" value={studio.st.x ?? 50} min={10} max={90} unit="%" onchange={(v) => ((studio.st.x = v), studio.inv())} />
     <StyleFieldRow label="Vertical Y" value={studio.st.y} min={5} max={95} unit="%" onchange={(v) => ((studio.st.y = v), (studio.st.auto = 0), studio.inv())} />
     <StyleFieldRow label="Side margin" value={studio.st.marginX} min={0} max={24} unit="%" onchange={(v) => ((studio.st.marginX = v), studio.inv())} />
     <StyleFieldRow label="Bottom margin" value={studio.st.marginY} min={0} max={120} unit="px" onchange={(v) => ((studio.st.marginY = v), studio.inv())} />

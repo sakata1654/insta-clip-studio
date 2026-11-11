@@ -1,6 +1,6 @@
 {
-  "name": "InstaClip Studio",
-  "short_name": "InstaClip",
+  "name": "Tibyan Studio",
+  "short_name": "Tibyan",
   "description": "Mobile & desktop browser video editor with dual subtitles, speaker banners, and WebCodecs MP4 export.",
   "start_url": "/",
   "display": "standalone",

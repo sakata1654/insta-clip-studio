@@ -33,9 +33,15 @@ export const ST0 = {
   sw: 4,
   bg: '#000000',
   bga: 0,
+  x: 50,
   y: 80,
   auto: 1,
   w: 82,
+  wUnit: '%',
+  wPx: 880,
+  maxH: 26,
+  hUnit: '%',
+  maxHPx: 340,
   bold: 1,
   upper: 0,
   shadow: 1,
@@ -232,7 +238,7 @@ export const DU0 = {
 
 export const EX0 = { arch: 1, crf: 19 };
 export const AUD0 = { enh: 1, vocals: 0, model: 'htdemucs', pre: '', track: '', trackName: '' };
-export const SUBCFG0 = { maxChars: 42, maxWords: 8, maxDur: 6, padBeforeMs: 500, padAfterMs: 500 };
+export const SUBCFG0 = { maxChars: 84, maxWords: 12, targetWords: 10, minWords: 6, maxDur: 8, padBeforeMs: 500, padAfterMs: 500 };
 
 export const PROV = {
   openai: ['https://api.openai.com/v1', 'gpt-4o-mini'],

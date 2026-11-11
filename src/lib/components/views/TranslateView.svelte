@@ -223,7 +223,10 @@
         studio.inv();
       }
 
-      if (studio.TR.live) for (const o of todo) if (o.tr) applyLine(o);
+      if (studio.TR.live) {
+        for (const o of todo) if (o.tr) applyLine(o);
+        studio.expandPipeSubtitles(false);
+      }
       status = `${stopRequested ? 'Stopped' : 'Done'} — ${done} translated, ${hit} cached${fails ? `, ${fails} failed (Retry)` : ''}`;
       studio.snap();
     } catch (e) {

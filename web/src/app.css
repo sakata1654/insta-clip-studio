@@ -367,7 +367,7 @@ input[type='color'] {
 /* Inspector Property Rows */
 .prop-row {
   display: grid;
-  grid-template-columns: 102px 1fr 44px;
+  grid-template-columns: 102px 1fr 56px;
   gap: 8px;
   align-items: center;
   margin: 5px 0;
@@ -380,14 +380,37 @@ input[type='color'] {
   white-space: nowrap;
 }
 .prop-row .val-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   text-align: center;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-xs);
-  padding: 2px 4px;
+  padding: 1px 4px;
   color: var(--text-secondary);
+}
+.prop-row .val-num {
+  width: 34px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-align: right;
+  padding: 0;
+  appearance: textfield;
+}
+.prop-row .val-num::-webkit-inner-spin-button,
+.prop-row .val-num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.prop-row .val-unit {
+  opacity: 0.7;
+  font-size: 10px;
 }
 
 .sw {

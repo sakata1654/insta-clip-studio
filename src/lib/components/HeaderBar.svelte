@@ -59,9 +59,9 @@
 
     <div class="brand">
       <div class="logo-mark">
-        <Icon name="film" size={13} />
+        <img src="/app-icon.png" alt="Tibyan Studio" class="brand-pfp" />
       </div>
-      <span class="app-title">InstaClip Studio</span>
+      <span class="app-title">Tibyan Studio</span>
       {#if isDev}
         <span class="env-pill">Preview</span>
       {/if}
@@ -243,11 +243,18 @@
     width: 24px;
     height: 24px;
     border-radius: var(--radius-sm);
-    background: var(--accent);
+    background: #474b33;
+    overflow: hidden;
     display: grid;
     place-items: center;
     color: #ffffff;
     flex-shrink: 0;
+  }
+  .brand-pfp {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .app-title {
