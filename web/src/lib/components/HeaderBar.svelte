@@ -100,7 +100,7 @@
         </button>
         <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
           <Icon name="languages" size={12} />
-          <span>{viewport.isTablet ? 'Translate' : 'Translation Desk'}</span>
+          <span>{viewport.isTablet ? 'Transcript' : 'Transcript Studio'}</span>
         </button>
         <button type="button" class:on={studio.nav === 'ai'} onclick={() => (studio.nav = 'ai')}>
           <Icon name="sparkles" size={12} />

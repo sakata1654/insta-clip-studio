@@ -93,7 +93,7 @@
       </button>
       <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
         <Icon name="languages" size={12} />
-        <span>Translation Desk</span>
+        <span>Transcript Studio</span>
       </button>
     </div>
   </div>

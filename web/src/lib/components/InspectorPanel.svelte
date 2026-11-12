@@ -59,9 +59,9 @@
           studio.clearSelection();
           studio.act = null;
         }}
-        title="Clear selection"
+        title="Deselect active item"
       >
-        Clear
+        Deselect
       </button>
     {/if}
   </div>
@@ -180,6 +180,19 @@
               <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'next')}>Push Word</button>
               <button type="button" class="xs" onclick={() => studio.mergeSubAt(subIdx)}>Merge Next</button>
             {/if}
+            <button
+              type="button"
+              class="xs ghost"
+              onclick={() => {
+                selSub.t = '';
+                if (selSub.tr) selSub.tr = '';
+                studio.inv();
+                studio.snap();
+              }}
+              title="Clear text in this cue"
+            >
+              Clear Text
+            </button>
             <button
               type="button"
               class="xs danger"

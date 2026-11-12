@@ -46,6 +46,7 @@ FAITHFULNESS AND TIMING
 - Keep punctuation and capitalization flowing naturally across continuing clauses rather than capitalizing/ending every fragment unnecessarily.
 
 TERMINOLOGY & QUOTATIONS
+- CRITICAL HONORIFIC PLACEMENT: In English sentences, NEVER place an Arabic honorific (such as ﷺ, صلى الله عليه وسلم, رضي الله عنه, رحمه الله) at the beginning of the sentence. Always place the honorific immediately after the relevant name or title (e.g. "The companions of the Prophet ﷺ", "Abu Bakr رضي الله عنه", "Imam Bukhari رحمه الله"). Never detach or displace honorifics.
 - ${ISLAMIC_TERM_MODES[trCfg.islamicTermMode || 'both'] || ISLAMIC_TERM_MODES.both}
 - ${
     trCfg.useSalawatSymbol !== false

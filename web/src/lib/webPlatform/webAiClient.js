@@ -1,3 +1,4 @@
+import { buildRollingAsrPrompt, reconcileChunkOverlapWords } from '../transcriptEngine/audioChunker.js';
 import { extractAsrWavChunks, uint8ToBase64 } from './webAudioTools.js';
 
 let cachedHealth = null;
@@ -164,6 +165,7 @@ export async function transcribeMediaWeb({
 
     let chunkJson = null;
     let lastErr = null;
+    const rollingPrompt = buildRollingAsrPrompt(prompt, allWords);
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (attempt > 0 && onProgress) {
@@ -179,7 +181,7 @@ export async function transcribeMediaWeb({
             maxWords,
             diarize,
             tagAudioEvents,
-            prompt,
+            prompt: rollingPrompt,
             mimeType: ch.mimeType || 'audio/wav',
             audioBase64: uint8ToBase64(ch.wavBytes),
           }),
@@ -202,6 +204,11 @@ export async function transcribeMediaWeb({
       continue;
     }
 
+    if (chunkJson.words && chunkJson.words.length) {
+      const reconciled = reconcileChunkOverlapWords(allWords, chunkJson.words, ch.startOffsetSec, ch.overlapSec || 0);
+      allWords.length = 0;
+      allWords.push(...reconciled);
+    }
     appendChunkWithOverlapDedup(allSegments, allWords, chunkJson, ch.startOffsetSec, ch.overlapSec || 0);
     if (chunkJson.text) allTexts.push(chunkJson.text.trim());
   }

@@ -14,6 +14,8 @@
   import { saveBlob } from '../../renderer.js';
   import { fvtt, fts, studio } from '../../state.svelte.js';
   import { getTauri } from '../../tauriBridge.js';
+  import { shapeBidiText } from '../../bidiHelper.js';
+  import { DEFAULT_ISLAMIC_GLOSSARY, formatGlossaryPrompt, validateSubtitleCues } from '../../transcriptEngine/transcriptModel.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import Icon from '../Icon.svelte';
   import StyleWorkflow from './StyleWorkflow.svelte';
@@ -181,6 +183,16 @@
     }
   }
 
+  const cueValidationMap = $derived.by(() => {
+    const list = validateSubtitleCues(studio.subs);
+    const m = new Map();
+    for (const item of list) {
+      if (!m.has(item.cueId)) m.set(item.cueId, []);
+      m.get(item.cueId).push(item);
+    }
+    return m;
+  });
+
   async function quickTranslate() {
     if (!studio.subs.length) return studio.toast('Generate subtitles first.');
     const key = studio.TR.key || (studio.API.prov === studio.TR.prov ? studio.API.key : '');
@@ -193,20 +205,26 @@
     const cfg = { ...studio.TR, key };
     const sys = buildProjectTranslationSystemPrompt(cfg, !!studio.TR.poetry);
     const sourceOf = (o) => (o.orig !== undefined ? o.orig : o.t);
+    const glossPrompt = formatGlossaryPrompt(DEFAULT_ISLAMIC_GLOSSARY);
     try {
       for (let i = 0; i < studio.subs.length; i += 20) {
         const ch = studio.subs.slice(i, i + 20);
         trStatus = `Translating ${i + 1}–${i + ch.length} of ${studio.subs.length}…`;
         const items = ch.map((o) => ({ i: o.id, t: sourceOf(o), durationMs: Math.round((o.e - o.s) * 1000), pauseBeforeMs: 0 }));
-        const res = await aiCallJson(cfg, buildProjectTranslationUserPrompt(cfg, items, '', [], !!studio.TR.poetry), sys);
+        const surroundingContext = studio.subs
+          .slice(Math.max(0, i - 12), Math.min(studio.subs.length, i + 32))
+          .map((s) => sourceOf(s))
+          .join(' ');
+        const contextStr = (surroundingContext ? surroundingContext + '\n\n' : '') + glossPrompt;
+        const res = await aiCallJson(cfg, buildProjectTranslationUserPrompt(cfg, items, contextStr, [], !!studio.TR.poetry), sys);
         const byId = new Map((res?.items || []).map((r) => [+r.i, r]));
         for (const o of ch) {
           const entry = byId.get(o.id);
           if (entry?.t) {
             o.orig ??= o.t;
-            o.tr = entry.t;
+            o.tr = shapeBidiText(entry.t);
             if (entry.issue) o.trIssue = entry.issue;
-            if (studio.TR.live) o.t = studio.TR.out === 'both' ? entry.t + '\n' + o.orig : entry.t;
+            if (studio.TR.live) o.t = studio.TR.out === 'both' ? o.tr + '\n' + o.orig : o.tr;
           }
         }
         trPct = Math.round(((i + ch.length) / studio.subs.length) * 100);
@@ -476,6 +494,11 @@
       ></textarea>
       {#if o.tr}
         <div class="hint" style="margin:3px 0 0;font-size:11px;color:var(--accent-secondary)">{o.tr}</div>
+      {/if}
+      {#if cueValidationMap.has(o.id)}
+        {#each cueValidationMap.get(o.id) as issue}
+          <div class="hint" style="margin:2px 0;font-size:10.5px;color:var(--accent-amber)">⚠ {issue.message}</div>
+        {/each}
       {/if}
     </div>
   {:else}

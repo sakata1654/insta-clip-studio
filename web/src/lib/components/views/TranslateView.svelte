@@ -7,7 +7,14 @@
   } from '../../prompts.js';
   import { saveBlob } from '../../renderer.js';
   import { fmt, fts, studio } from '../../state.svelte.js';
+  import { shapeBidiText } from '../../bidiHelper.js';
+  import {
+    DEFAULT_ISLAMIC_GLOSSARY,
+    formatGlossaryPrompt,
+    validateSubtitleCues,
+  } from '../../transcriptEngine/transcriptModel.js';
   import CategoryBlock from '../CategoryBlock.svelte';
+  import Icon from '../Icon.svelte';
 
   let busy = $state(false);
   let stopRequested = $state(false);
@@ -15,6 +22,59 @@
   let status = $state('');
   let testStatus = $state('');
   let fetchedModels = $state([]);
+  let activeStudioTab = $state('desk'); // 'transcript' | 'segmentation' | 'desk'
+
+  const cueValidationIssues = $derived(validateSubtitleCues(studio.subs));
+  const cueIssuesMap = $derived.by(() => {
+    const m = new Map();
+    for (const it of cueValidationIssues) {
+      if (!m.has(it.cueId)) m.set(it.cueId, []);
+      m.get(it.cueId).push(it);
+    }
+    return m;
+  });
+
+  const paragraphs = $derived.by(() => {
+    if (!studio.subs.length) return [];
+    const list = [];
+    let cur = [];
+    let wCount = 0;
+    for (let i = 0; i < studio.subs.length; i++) {
+      const s = studio.subs[i];
+      const prev = cur.length ? cur[cur.length - 1] : null;
+      const pauseGap = prev ? Math.max(0, s.s - prev.e) : 0;
+      const words = (s.t || '').trim().split(/\s+/).filter(Boolean);
+      const isEndPunct = /[.!?؟۔…]$/u.test(s.t || '');
+
+      if (cur.length && (pauseGap >= 0.85 || wCount >= 40 || (isEndPunct && wCount >= 18))) {
+        list.push({
+          id: list.length + 1,
+          s: cur[0].s,
+          e: cur[cur.length - 1].e,
+          text: cur.map((x) => (x.orig !== undefined ? x.orig : x.t)).join(' '),
+          trText: cur.map((x) => x.tr || '').filter(Boolean).join(' '),
+          cues: [...cur],
+          wordCount: wCount,
+        });
+        cur = [];
+        wCount = 0;
+      }
+      cur.push(s);
+      wCount += words.length;
+    }
+    if (cur.length) {
+      list.push({
+        id: list.length + 1,
+        s: cur[0].s,
+        e: cur[cur.length - 1].e,
+        text: cur.map((x) => (x.orig !== undefined ? x.orig : x.t)).join(' '),
+        trText: cur.map((x) => x.tr || '').filter(Boolean).join(' '),
+        cues: [...cur],
+        wordCount: wCount,
+      });
+    }
+    return list;
+  });
 
   const hashStr = (s) => {
     let h = 5381;
@@ -162,10 +222,13 @@
           };
         });
 
+        const glossPrompt = formatGlossaryPrompt(DEFAULT_ISLAMIC_GLOSSARY);
+        const combinedContext = (contextStr ? contextStr + '\n\n' : '') + glossPrompt;
+
         status = `Translating ${done + 1}–${done + ch.length} of ${need.length}…`;
         const res = await aiCallJson(
           effectiveCfg,
-          buildProjectTranslationUserPrompt(studio.TR, items, contextStr, recentPairs.slice(-5), !!studio.TR.poetry),
+          buildProjectTranslationUserPrompt(studio.TR, items, combinedContext, recentPairs.slice(-5), !!studio.TR.poetry),
           sys,
           (m) => (status = m)
         );
@@ -176,12 +239,12 @@
         for (const o of ch) {
           const entry = byId.get(o.id);
           if (entry && entry.t) {
-            o.tr = entry.t;
+            o.tr = shapeBidiText(entry.t);
             if (entry.issue) o.trIssue = entry.issue;
             else delete o.trIssue;
             delete o.tre;
-            C[cacheKeyFor(o)] = entry;
-            recentPairs.push({ s: sourceOf(o), t: entry.t });
+            C[cacheKeyFor(o)] = { t: o.tr, issue: entry.issue };
+            recentPairs.push({ s: sourceOf(o), t: o.tr });
           } else {
             missed.push(o);
           }
@@ -197,11 +260,11 @@
             for (const o of missed) {
               const entry = m2.get(o.id);
               if (entry && entry.t) {
-                o.tr = entry.t;
+                o.tr = shapeBidiText(entry.t);
                 if (entry.issue) o.trIssue = entry.issue;
                 else delete o.trIssue;
                 delete o.tre;
-                C[cacheKeyFor(o)] = entry;
+                C[cacheKeyFor(o)] = { t: o.tr, issue: entry.issue };
               } else {
                 o.tre = 'AI Error — missing in response';
                 fails++;
@@ -349,6 +412,178 @@
   </aside>
 
   <section class="tr-main">
+    <div class="tr-view-tabs" role="tablist">
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={activeStudioTab === 'transcript'}
+        onclick={() => (activeStudioTab = 'transcript')}
+      >
+        <Icon name="align-left" size={13} />
+        <span>1. Original Transcript ({paragraphs.length} paragraphs)</span>
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={activeStudioTab === 'segmentation'}
+        onclick={() => (activeStudioTab = 'segmentation')}
+      >
+        <Icon name="subtitles" size={13} />
+        <span>2. Subtitle Segmentation ({studio.subs.length} cues{#if cueValidationIssues.length} · <span class="badge warn-pill">{cueValidationIssues.length} alerts</span>{/if})</span>
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={activeStudioTab === 'desk'}
+        onclick={() => (activeStudioTab = 'desk')}
+      >
+        <Icon name="languages" size={13} />
+        <span>3. Translation Desk ({studio.subs.filter((s) => !!s.tr).length}/{studio.subs.length})</span>
+      </button>
+    </div>
+
+    {#if activeStudioTab === 'transcript'}
+      <!-- TAB 1: ORIGINAL TRANSCRIPT -->
+      <div class="tr-toolbar">
+        <div class="rt" style="gap:8px">
+          <span class="badge mono">{paragraphs.reduce((sum, p) => sum + p.wordCount, 0)} total words</span>
+          <span class="badge mono">{paragraphs.length} thought paragraphs</span>
+        </div>
+        <span style="flex:1"></span>
+        <button
+          type="button"
+          class="sm"
+          onclick={() => {
+            const full = paragraphs.map((p) => `[${fmt(p.s)} - ${fmt(p.e)}]\n${p.text}\n`).join('\n');
+            navigator.clipboard?.writeText(full);
+            studio.toast('Transcript copied to clipboard');
+          }}
+        >
+          <Icon name="copy" size={12} />
+          <span>Copy Full Text</span>
+        </button>
+        <button
+          type="button"
+          class="sm"
+          onclick={() => {
+            const full = paragraphs.map((p) => `[${fmt(p.s)} - ${fmt(p.e)}]\n${p.text}\n${p.trText ? 'Tr: ' + p.trText + '\n' : ''}`).join('\n');
+            saveBlob(new Blob([full], { type: 'text/plain' }), 'transcript.txt');
+          }}
+        >
+          Export TXT
+        </button>
+      </div>
+
+      <div class="tr-list">
+        {#each paragraphs as p (p.id)}
+          <div class="para-card">
+            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+              <div class="rt" style="gap:6px">
+                <button type="button" class="xs pri" onclick={() => { studio.seek(p.s); studio.setView('ed'); }}>
+                  ⏵ {fmt(p.s)} → {fmt(p.e)}
+                </button>
+                <span class="badge mono">{p.wordCount} words</span>
+                <span class="badge mono">{p.cues.length} cues</span>
+              </div>
+            </div>
+            <div class="para-text" dir="auto">
+              {p.text}
+            </div>
+            {#if p.trText}
+              <div class="para-tr-text" dir="auto">
+                <span class="hint" style="margin:0 0 4px;font-size:11px;font-weight:600">Translation:</span>
+                {p.trText}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <div class="hint">No speech transcript available. Generate subtitles or import an SRT to read continuous paragraphs here.</div>
+        {/each}
+      </div>
+
+    {:else if activeStudioTab === 'segmentation'}
+      <!-- TAB 2: SUBTITLE SEGMENTATION -->
+      <div class="tr-toolbar">
+        <div class="rt" style="gap:8px">
+          <span class="badge mono">{studio.subs.length} cues</span>
+          <span class="badge ok">Recommended: 8–12 words/cue</span>
+          {#if cueValidationIssues.length}
+            <span class="badge warn">{cueValidationIssues.length} quality alerts</span>
+          {/if}
+        </div>
+        <span style="flex:1"></span>
+        <button
+          type="button"
+          class="sm"
+          onclick={() => {
+            studio.expandPipeSubtitles(false);
+            studio.inv();
+            studio.snap();
+            studio.toast('Divided cues at | markers');
+          }}
+        >
+          Expand | Splits
+        </button>
+      </div>
+
+      <div class="tr-list">
+        {#each studio.subs as o, ix (o.id)}
+          {@const words = (o.t || '').trim().split(/\s+/).filter(Boolean)}
+          {@const alerts = cueIssuesMap.get(o.id) || []}
+          <div class="seg-card" class:has-alert={alerts.length > 0}>
+            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+              <div class="rt" style="gap:6px">
+                <button type="button" class="xs" onclick={() => { studio.seek(o.s); studio.setView('ed'); }}>
+                  ⏵ {fmt(o.s)} → {fmt(o.e)}
+                </button>
+                <span
+                  class="badge mono"
+                  class:ok={words.length >= 7 && words.length <= 13}
+                  class:warn={words.length < 6 || words.length > 14}
+                >
+                  {words.length}w {words.length >= 7 && words.length <= 13 ? '✓' : ''}
+                </span>
+                <span class="badge mono">{(o.e - o.s).toFixed(1)}s</span>
+              </div>
+              <div class="rt" style="gap:4px">
+                {#if (o.t || '').includes('|')}
+                  <button type="button" class="xs pri" onclick={() => studio.expandPipeSubtitles()} title="Split on | marker">Split |</button>
+                {/if}
+                {#if ix < studio.subs.length - 1}
+                  <button type="button" class="xs" onclick={() => studio.transferWord(ix, 'prev')} title="Pull word from next cue">← Pull</button>
+                  <button type="button" class="xs" onclick={() => studio.transferWord(ix, 'next')} title="Push word to next cue">Push →</button>
+                  <button type="button" class="xs" onclick={() => studio.mergeSubAt(ix)} title="Merge with next cue">Merge ⊕</button>
+                {/if}
+              </div>
+            </div>
+
+            <textarea
+              dir="auto"
+              rows="2"
+              style="width:100%"
+              value={o.t}
+              oninput={(e) => {
+                o.t = e.currentTarget.value;
+                studio.inv();
+              }}
+              onblur={() => studio.expandPipeSubtitles()}
+            ></textarea>
+
+            {#if alerts.length > 0}
+              <div class="seg-alerts">
+                {#each alerts as a}
+                  <div class="hint" style="margin:2px 0;font-size:11px;color:var(--accent-amber)">⚠ {a.message}</div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <div class="hint">No subtitle cues available yet. Generate or import subtitles first.</div>
+        {/each}
+      </div>
+
+    {:else}
+      <!-- TAB 3: TRANSLATION DESK -->
     <div class="tr-toolbar">
       <button type="button" class="pri" disabled={busy} onclick={() => runTranslate()}>Translate</button>
       <button type="button" class="sm" disabled={busy} onclick={() => runTranslate({ retry: true })}>↻ Retry failed</button>
@@ -488,6 +723,7 @@
         <div class="hint">Generate or import subtitles first, then translate cleanly here.</div>
       {/each}
     </div>
+    {/if}
   </section>
 </div>
 
@@ -559,6 +795,86 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
+  }
+  .tr-view-tabs {
+    display: flex;
+    background: var(--bg-rail);
+    border-bottom: 1px solid var(--border-color);
+    padding: 6px 12px 0;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 550;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+  }
+  .tab-btn.active {
+    color: var(--accent);
+    background: var(--bg-canvas);
+    border-color: var(--border-color);
+    border-bottom: 1px solid var(--bg-canvas);
+    margin-bottom: -1px;
+    font-weight: 650;
+  }
+  .para-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .para-text {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    padding: 8px 0;
+  }
+  .para-tr-text {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-color);
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--accent-secondary);
+    white-space: pre-wrap;
+  }
+  .seg-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .seg-card.has-alert {
+    border-color: rgba(210, 153, 34, 0.45);
+  }
+  .seg-alerts {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border-color);
+  }
+  .warn-pill {
+    background: rgba(210, 153, 34, 0.2);
+    color: var(--accent-amber);
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 10.5px;
   }
   @media (max-width: 920px) {
     .tr-page {

@@ -116,9 +116,16 @@
     studio.toast(`Saved ${format} preset: ${name}`);
   }
 
-  function deletePreset(id) {
+  async function deletePreset(id) {
     const target = customPresets.find((x) => x.id === id);
-    if (!target || !confirm(`Delete preset “${target.name}”?`)) return;
+    if (!target) return;
+    const ok = await studio.confirm({
+      title: 'Delete Preset',
+      message: `Delete preset “${target.name}”?`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     customPresets = customPresets.filter((x) => x.id !== id);
     saveCustomPresets(customPresets);
   }

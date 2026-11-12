@@ -159,6 +159,39 @@ function elevenLabsWordsToSegments(words, fallbackText, totalDuration, tagAudioE
   return segs;
 }
 
+function groqWordsToSegments(words, fallbackText, maxWords = 12) {
+  if (!words || !words.length) {
+    const txt = String(fallbackText || '').trim();
+    return txt ? [{ s: 0, e: 4, t: txt, w: [] }] : [];
+  }
+  const segs = [];
+  let cur = [];
+  const limit = Math.max(4, Math.min(18, maxWords || 12));
+  const endRe = /[.!?؟۔…]$/;
+  const flush = () => {
+    if (!cur.length) return;
+    segs.push({
+      s: cur[0].s,
+      e: cur[cur.length - 1].e,
+      t: cur.map(x => x.w).join(' ').trim(),
+      w: cur.map(x => ({ w: x.w, s: x.s, e: x.e })),
+    });
+    cur = [];
+  };
+  for (const w of words) {
+    if (cur.length) {
+      const prev = cur[cur.length - 1];
+      const gap = Math.max(0, w.s - prev.e);
+      if (endRe.test(prev.w) || gap >= 0.85 || cur.length >= limit) {
+        flush();
+      }
+    }
+    cur.push(w);
+  }
+  flush();
+  return segs;
+}
+
 async function readBody(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -282,6 +315,109 @@ async function handleInvoke(cmd, req, res) {
       if (!ff) throw new Error('FFmpeg not found. Install FFmpeg or add it to PATH.');
       const total = args.durationHint || probeDuration(args.input) || 0;
       emit('whisper-log', 'extract-progress=0%');
+      if (args.engine === 'groq') {
+        const key = (args.groqKey || '').trim() || ovr('groq_key');
+        if (!key) throw new Error('Add your Groq API key first in Auto Subtitles or Settings.');
+        const modelId = args.model === 'whisper-large-v3-turbo' ? 'whisper-large-v3-turbo' : 'whisper-large-v3';
+        const chunkSec = 120;
+        const overlapSec = 3.5;
+        const totalDur = total || probeDuration(args.input) || 120;
+        const numChunks = Math.max(1, Math.ceil(totalDur / (chunkSec - overlapSec)));
+
+        const allWords = [];
+        const allTexts = [];
+        const failedChunks = [];
+
+        for (let ci = 0; ci < numChunks; ci++) {
+          const startSec = ci === 0 ? 0 : Math.max(0, ci * (chunkSec - overlapSec));
+          const chunkMp3 = path.join(os.tmpdir(), `ics_dev_groq_${Date.now()}_${ci}.mp3`);
+          emit('whisper-log', `phase=uploading-groq:${ci + 1}/${numChunks}`);
+
+          const exCode = await runProcess(ff, [
+            '-y', '-hide_banner', '-loglevel', 'error',
+            '-ss', String(startSec), '-t', String(chunkSec),
+            '-i', args.input, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+            '-c:a', 'libmp3lame', '-b:a', '64k', chunkMp3
+          ]);
+
+          if (exCode !== 0 || !fs.existsSync(chunkMp3) || fs.statSync(chunkMp3).size < 100) {
+            try { fs.unlinkSync(chunkMp3); } catch {}
+            if (ci > 0 && startSec >= totalDur - 1) break;
+            failedChunks.push(`Chunk ${ci + 1} extraction failed`);
+            continue;
+          }
+
+          const rollingPrompt = [
+            (args.prompt || '').slice(0, 200),
+            allWords.slice(-16).map(w => w.w).join(' ')
+          ].filter(Boolean).join('. ').slice(0, 400);
+
+          let parsed = null;
+          let lastErr = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const form = new FormData();
+              form.append('file', new Blob([fs.readFileSync(chunkMp3)], { type: 'audio/mpeg' }), 'audio.mp3');
+              form.append('model', modelId);
+              form.append('response_format', 'verbose_json');
+              form.append('timestamp_granularities[]', 'word');
+              form.append('timestamp_granularities[]', 'segment');
+              form.append('temperature', '0');
+              if (args.lang && args.lang !== 'auto') form.append('language', args.lang);
+              if (rollingPrompt) form.append('prompt', rollingPrompt);
+
+              const resp = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: { authorization: `Bearer ${key}` },
+                body: form
+              });
+              const j = await resp.json().catch(() => ({}));
+              if (resp.ok) {
+                parsed = j;
+                break;
+              }
+              lastErr = j?.error?.message || `Groq HTTP ${resp.status}`;
+            } catch (err) {
+              lastErr = err?.message || String(err);
+            }
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          }
+
+          try { fs.unlinkSync(chunkMp3); } catch {}
+
+          if (!parsed) {
+            failedChunks.push(`Chunk ${ci + 1}: ${lastErr}`);
+            continue;
+          }
+
+          const rawWords = (parsed.words || []).map(w => ({
+            w: String(w.word ?? w.text ?? '').trim(),
+            s: Number(w.start || 0) + startSec,
+            e: Math.max(Number(w.start || 0) + startSec + 0.04, Number(w.end || 0) + startSec)
+          })).filter(w => w.w);
+
+          if (allWords.length && rawWords.length) {
+            const overlapCutoff = startSec + overlapSec * 0.5;
+            const keptExisting = allWords.filter(w => w.s < overlapCutoff);
+            const keptIncoming = rawWords.filter(w => w.s >= overlapCutoff);
+            allWords.length = 0;
+            allWords.push(...keptExisting, ...keptIncoming);
+          } else {
+            allWords.push(...rawWords);
+          }
+
+          if (parsed.text) allTexts.push(parsed.text.trim());
+        }
+
+        if (!allWords.length && failedChunks.length) {
+          throw new Error('Groq transcription failed: ' + failedChunks.join('; '));
+        }
+
+        emit('whisper-log', 'progress = 100%');
+        const segs = groqWordsToSegments(allWords, allTexts.join(' '), args.maxWords ?? 12);
+        result = JSON.stringify({ segments: segs, words: allWords, engine: 'groq', model: modelId, failed_chunks: failedChunks });
+        break;
+      }
       if (args.engine === 'elevenlabs') {
         const key = (args.elevenlabsKey || '').trim() || ovr('elevenlabs_key');
         if (!key) throw new Error('Add your ElevenLabs API key first.');

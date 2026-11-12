@@ -1,4 +1,5 @@
 import { recordTrimAdjustment } from './aiClipTrainer.js';
+import { isRtlBase, shapeBidiText } from './bidiHelper.js';
 import { AMIRI } from './constants.js';
 import { cl, fts, hex2, rgb2hex, rgba, studio } from './state.svelte.js';
 import { canShareMediaFile } from './webPlatform/viewport.svelte.js';
@@ -9,7 +10,7 @@ const clean = (t) =>
   String(t || '')
     .replace(/\s+([\u064B-\u0652])/g, '$1')
     .replace(/([\u064E\u064F\u0610])([\u0651])/g, '$2$1');
-const isRtl = (t) => /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/.test(t || '');
+const isRtl = (t) => isRtlBase(t);
 
 const wc = new Map();
 const avatarCache = new Map();
@@ -119,7 +120,7 @@ function measureLines(X, txt, font, maxW, ls = 0) {
 }
 
 function prep(X, o, txt, maxW, fit) {
-  txt = clean(o.upper ? txt.toUpperCase() : txt);
+  txt = shapeBidiText(clean(o.upper ? txt.toUpperCase() : txt));
   let size = o.size;
   let lh = fit?.lh || Number(o.lh) || 1.3;
   let padY = fit?.padY ?? (o.bga > 0 ? Math.max(0, Number(o.padY ?? 14)) : 0);

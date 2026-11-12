@@ -6,6 +6,7 @@
  * 3) Mixes trimmed source + custom audio tracks into AudioBuffer for WebCodecs AAC export.
  */
 
+import { createIntelligentAudioChunks } from '../transcriptEngine/audioChunker.js';
 import { extractMp4AacChunks } from './mp4AudioDemuxer.js';
 
 const SAMPLE_RATE_ASR = 16000;
@@ -133,21 +134,17 @@ export async function extractAsrWavChunks(fileOrBlob, onProgress) {
   const rendered = await off.startRendering();
   const mono = rendered.getChannelData(0);
 
-  const maxChunkSamples = CHUNK_SECONDS_ASR * SAMPLE_RATE_ASR;
-  const overlapSamples = Math.min(OVERLAP_SECONDS_ASR * SAMPLE_RATE_ASR, Math.floor(maxChunkSamples / 4));
-  const stepSamples = mono.length > maxChunkSamples ? maxChunkSamples - overlapSamples : maxChunkSamples;
+  const intelligentChunks = createIntelligentAudioChunks(mono, SAMPLE_RATE_ASR, 3.0);
   const chunks = [];
-  for (let offset = 0; offset < mono.length; offset += stepSamples) {
-    const end = Math.min(mono.length, offset + maxChunkSamples);
-    const wavBytes = encodeWavMono16(mono.subarray(offset, end), SAMPLE_RATE_ASR);
+  for (const ic of intelligentChunks) {
+    const wavBytes = encodeWavMono16(mono.subarray(ic.startSample, ic.endSample), SAMPLE_RATE_ASR);
     chunks.push({
-      startOffsetSec: offset / SAMPLE_RATE_ASR,
-      durationSec: (end - offset) / SAMPLE_RATE_ASR,
-      overlapSec: offset > 0 ? OVERLAP_SECONDS_ASR : 0,
+      startOffsetSec: ic.startOffsetSec,
+      durationSec: ic.durationSec,
+      overlapSec: ic.overlapSec,
       mimeType: 'audio/wav',
       wavBytes,
     });
-    if (end >= mono.length) break;
   }
   return { duration: dur, chunks };
 }

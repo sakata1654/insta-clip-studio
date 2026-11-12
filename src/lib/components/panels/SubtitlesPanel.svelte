@@ -415,7 +415,27 @@
     <button type="button" class="xs" onclick={() => saveBlob(new Blob(['WEBVTT\n\n' + studio.subs.map((s, i) => `${i + 1}\n${fvtt(s.s)} --> ${fvtt(s.e)}\n${s.t}\n`).join('\n')], { type: 'text/vtt' }), 'subtitles.vtt')}>VTT</button>
     <button type="button" class="xs" onclick={() => shiftAll(-0.1)}>−0.1s</button>
     <button type="button" class="xs" onclick={() => shiftAll(0.1)}>+0.1s</button>
-    <button type="button" class="xs" onclick={() => confirm('Delete all subtitles?') && ((studio.subs = []), studio.inv(), studio.snap())}>Clear</button>
+    <button
+      type="button"
+      class="xs danger"
+      onclick={async () => {
+        const ok = await studio.confirm({
+          title: 'Delete All Subtitles',
+          message: 'Are you sure you want to delete all subtitles from this project?',
+          confirmText: 'Delete All',
+          danger: true,
+        });
+        if (ok) {
+          studio.subs = [];
+          studio.sel = null;
+          studio.act = null;
+          studio.inv();
+          studio.snap();
+        }
+      }}
+    >
+      Clear All
+    </button>
   </div>
   <div class="rt">
     <input type="number" step="0.8" style="width:0;display:none" />
