@@ -46,6 +46,18 @@ export default async function handler(req, res) {
   const engine = String(body?.engine || 'elevenlabs').toLowerCase();
   const audioB64 = String(body?.audioBase64 || '');
   const mime = String(body?.mimeType || 'audio/wav');
+  const ext = mime.includes('aac')
+    ? 'aac'
+    : mime.includes('mp4') || mime.includes('m4a')
+      ? 'm4a'
+      : mime.includes('mpeg') || mime.includes('mp3')
+        ? 'mp3'
+        : mime.includes('webm')
+          ? 'webm'
+          : mime.includes('ogg')
+            ? 'ogg'
+            : 'wav';
+  const uploadName = `audio.${ext}`;
   const lang = String(body?.lang || '').trim();
   const model = String(body?.model || (engine === 'elevenlabs' ? 'scribe_v2' : 'whisper-1'));
   const maxWords = Math.max(3, Math.min(18, Number(body?.maxWords) || 12));
@@ -76,7 +88,7 @@ export default async function handler(req, res) {
       if (lang && lang !== 'auto') fd.append('language_code', lang);
       if (diarize) fd.append('diarize', 'true');
       fd.append('tag_audio_events', tagAudioEvents ? 'true' : 'false');
-      fd.append('file', new Blob([audioBuf], { type: mime }), 'audio.wav');
+      fd.append('file', new Blob([audioBuf], { type: mime }), uploadName);
 
       const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
         method: 'POST',
@@ -107,7 +119,7 @@ export default async function handler(req, res) {
       fd.append('temperature', '0');
       if (lang && lang !== 'auto') fd.append('language', lang);
       if (body?.prompt) fd.append('prompt', String(body.prompt).slice(0, 400));
-      fd.append('file', new Blob([audioBuf], { type: mime }), 'audio.wav');
+      fd.append('file', new Blob([audioBuf], { type: mime }), uploadName);
 
       const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
@@ -145,7 +157,7 @@ export default async function handler(req, res) {
     fd.append('timestamp_granularities[]', 'word');
     if (lang && lang !== 'auto') fd.append('language', lang);
     if (body?.prompt) fd.append('prompt', String(body.prompt).slice(0, 400));
-    fd.append('file', new Blob([audioBuf], { type: mime }), 'audio.wav');
+    fd.append('file', new Blob([audioBuf], { type: mime }), uploadName);
 
     const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',

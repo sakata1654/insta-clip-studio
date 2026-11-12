@@ -180,7 +180,7 @@ export async function transcribeMediaWeb({
             diarize,
             tagAudioEvents,
             prompt,
-            mimeType: 'audio/wav',
+            mimeType: ch.mimeType || 'audio/wav',
             audioBase64: uint8ToBase64(ch.wavBytes),
           }),
         });

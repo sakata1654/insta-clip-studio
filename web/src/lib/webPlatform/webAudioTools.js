@@ -6,6 +6,8 @@
  * 3) Mixes trimmed source + custom audio tracks into AudioBuffer for WebCodecs AAC export.
  */
 
+import { extractMp4AacChunks } from './mp4AudioDemuxer.js';
+
 const SAMPLE_RATE_ASR = 16000;
 const CHUNK_SECONDS_ASR = 105; // 105s * 16000 * 2 bytes = ~3.36 MB WAV (< 4.2 MB Vercel body cap!)
 const OVERLAP_SECONDS_ASR = 4; // 4s overlap prevents losing words across chunk boundaries
@@ -17,7 +19,7 @@ export async function decodeMediaAudio(fileOrBlob) {
   const ctx = new Ctx();
   try {
     const ab = await fileOrBlob.arrayBuffer();
-    const audioBuf = await ctx.decodeAudioData(ab.slice(0));
+    const audioBuf = await ctx.decodeAudioData(ab);
     return audioBuf;
   } finally {
     try { await ctx.close(); } catch {}
@@ -63,12 +65,61 @@ export function uint8ToBase64(bytes) {
 }
 
 /**
- * Decodes and downsamples source audio locally into 16 kHz mono WAV chunks (< 3.5 MB each)
- * suitable for Vercel serverless transcription without ever uploading the raw video file.
+ * Extracts lightweight audio chunks locally from Video/Audio files for cloud transcription:
+ * 1) For MP4/MOV/M4V/M4A (or when mobile AudioContext.decodeAudioData fails), demuxes the
+ *    AAC audio stream directly via File.slice() without loading full video into RAM.
+ * 2) Otherwise decodes via Web Audio API and downsamples to 16 kHz mono WAV chunks (< 3.5 MB each).
  */
 export async function extractAsrWavChunks(fileOrBlob, onProgress) {
-  if (onProgress) onProgress(5, 'Decoding audio locally via Web Audio…');
-  const decoded = await decodeMediaAudio(fileOrBlob);
+  const name = String(fileOrBlob?.name || '').toLowerCase();
+  const mime = String(fileOrBlob?.type || '').toLowerCase();
+  const looksMp4 = /\.(mp4|mov|m4v|m4a|3gp)$/.test(name) || /mp4|quicktime/.test(mime);
+
+  // Prefer streaming MP4 AAC demuxer on MP4/MOV files (prevents mobile decodeAudioData failures & RAM spikes)
+  if (looksMp4 && typeof fileOrBlob?.slice === 'function') {
+    try {
+      const demuxed = await extractMp4AacChunks(fileOrBlob, onProgress, {
+        chunkSec: CHUNK_SECONDS_ASR,
+        overlapSec: OVERLAP_SECONDS_ASR,
+      });
+      if (demuxed && demuxed.chunks?.length) return demuxed;
+    } catch {
+      // Fall through to Web Audio decode fallback
+    }
+  }
+
+  let decoded;
+  try {
+    if (onProgress) onProgress(5, 'Decoding audio locally via Web Audio…');
+    decoded = await decodeMediaAudio(fileOrBlob);
+  } catch (err) {
+    // Second-chance MP4 demuxer even if extension/MIME was missing
+    if (typeof fileOrBlob?.slice === 'function') {
+      try {
+        const demuxed = await extractMp4AacChunks(fileOrBlob, onProgress, {
+          chunkSec: CHUNK_SECONDS_ASR,
+          overlapSec: OVERLAP_SECONDS_ASR,
+        });
+        if (demuxed && demuxed.chunks?.length) return demuxed;
+      } catch {}
+    }
+    // Small audio/webm fallback: upload directly if under 2.8 MB
+    if (fileOrBlob?.size > 0 && fileOrBlob.size <= 2_800_000) {
+      const bytes = new Uint8Array(await fileOrBlob.arrayBuffer());
+      return {
+        duration: 0,
+        chunks: [{
+          startOffsetSec: 0,
+          durationSec: 0,
+          overlapSec: 0,
+          mimeType: fileOrBlob.type || 'audio/mp4',
+          wavBytes: bytes,
+        }],
+      };
+    }
+    throw new Error(`Browser audio decoding failed (${err?.message || 'unsupported codec'}). Try MP4/AAC or an audio file (MP3/M4A/WAV).`);
+  }
+
   const dur = decoded.duration;
   const totalOutSamples = Math.max(1, Math.ceil(dur * SAMPLE_RATE_ASR));
 
@@ -93,6 +144,7 @@ export async function extractAsrWavChunks(fileOrBlob, onProgress) {
       startOffsetSec: offset / SAMPLE_RATE_ASR,
       durationSec: (end - offset) / SAMPLE_RATE_ASR,
       overlapSec: offset > 0 ? OVERLAP_SECONDS_ASR : 0,
+      mimeType: 'audio/wav',
       wavBytes,
     });
     if (end >= mono.length) break;
