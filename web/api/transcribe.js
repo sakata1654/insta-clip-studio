@@ -45,17 +45,17 @@ export default async function handler(req, res) {
 
   const engine = String(body?.engine || 'elevenlabs').toLowerCase();
   const audioB64 = String(body?.audioBase64 || '');
-  const mime = String(body?.mimeType || 'audio/wav');
-  const ext = mime.includes('aac')
-    ? 'aac'
-    : mime.includes('mp4') || mime.includes('m4a')
-      ? 'm4a'
-      : mime.includes('mpeg') || mime.includes('mp3')
-        ? 'mp3'
-        : mime.includes('webm')
-          ? 'webm'
-          : mime.includes('ogg')
-            ? 'ogg'
+  const mime = String(body?.mimeType || 'audio/wav').toLowerCase();
+  const ext = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')
+    ? 'm4a'
+    : mime.includes('mpeg') || mime.includes('mp3')
+      ? 'mp3'
+      : mime.includes('webm')
+        ? 'webm'
+        : mime.includes('ogg') || mime.includes('opus')
+          ? 'ogg'
+          : mime.includes('flac')
+            ? 'flac'
             : 'wav';
   const uploadName = `audio.${ext}`;
   const lang = String(body?.lang || '').trim();
@@ -119,7 +119,12 @@ export default async function handler(req, res) {
       fd.append('temperature', '0');
       if (lang && lang !== 'auto') fd.append('language', lang);
       if (body?.prompt) fd.append('prompt', String(body.prompt).slice(0, 400));
-      fd.append('file', new Blob([audioBuf], { type: mime }), uploadName);
+
+      // Groq strictly allows: [flac mp3 mp4 mpeg mpga m4a ogg opus wav webm]
+      const groqSupported = new Set(['flac', 'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'ogg', 'opus', 'wav', 'webm']);
+      const safeExt = groqSupported.has(ext) ? ext : 'mp3';
+      const safeMime = safeExt === 'mp3' ? 'audio/mpeg' : safeExt === 'm4a' ? 'audio/m4a' : safeExt === 'wav' ? 'audio/wav' : mime;
+      fd.append('file', new Blob([audioBuf], { type: safeMime }), `audio.${safeExt}`);
 
       const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',

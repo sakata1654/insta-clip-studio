@@ -336,7 +336,7 @@ async function handleInvoke(cmd, req, res) {
           const exCode = await runProcess(ff, [
             '-y', '-hide_banner', '-loglevel', 'error',
             '-ss', String(startSec), '-t', String(chunkSec),
-            '-i', args.input, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000',
+            '-i', args.input, '-vn', '-ac', '1', '-ar', '16000',
             '-c:a', 'libmp3lame', '-b:a', '64k', chunkMp3
           ]);
 

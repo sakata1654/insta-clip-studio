@@ -908,12 +908,13 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
                     ff_args.push("-t".into());
                     ff_args.push(format!("{:.3}", t1 - t0));
                 }
-                ff_args.extend(["-i".into(), input.clone(), "-map".into(), "0:a:0".into(), "-vn".into(), "-ac".into(), "1".into(), "-ar".into(), "16000".into(), "-c:a".into(), "libmp3lame".into(), "-b:a".into(), "64k".into(), chunk_mp3.display().to_string()]);
+                ff_args.extend(["-i".into(), input.clone(), "-vn".into(), "-ac".into(), "1".into(), "-ar".into(), "16000".into(), "-c:a".into(), "libmp3lame".into(), "-b:a".into(), "64k".into(), chunk_mp3.display().to_string()]);
                 ext.args(&ff_args);
                 let out_ext = ext.output().map_err(|e| format!("Audio chunking failed: {e}"))?;
                 if !out_ext.status.success() || !chunk_mp3.is_file() {
+                    let err_msg = String::from_utf8_lossy(&out_ext.stderr);
                     let _ = std::fs::remove_file(&chunk_mp3);
-                    failed_chunks.push(format!("chunk {}: audio extraction failed", ci + 1));
+                    failed_chunks.push(format!("chunk {}: audio extraction failed ({})", ci + 1, err_msg.trim()));
                     continue;
                 }
 
@@ -923,7 +924,7 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
                     "-X".into(), "POST".into(),
                     "-o".into(), out_json.display().to_string(),
                     "-w".into(), "%{http_code}".into(),
-                    "-F".into(), format!("file=@\"{}\"", chunk_mp3.display()),
+                    "-F".into(), format!("file=@{};type=audio/mpeg;filename=audio.mp3", chunk_mp3.display()),
                     "-F".into(), format!("model={model_id}"),
                     "-F".into(), "response_format=verbose_json".into(),
                     "-F".into(), "timestamp_granularities[]=word".into(),
@@ -948,7 +949,7 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
                     let curl_res = curl_with_bearer(&args, &api_key);
                     let body = std::fs::read_to_string(&out_json).unwrap_or_default();
                     match curl_res {
-                        Ok((code, _, stderr)) if code >= 200 && code < 300 => {
+                        Ok((code, _, _stderr)) if code >= 200 && code < 300 => {
                             if let Ok(v) = serde_json::from_str::<Value>(&body) {
                                 parsed_ok = Some(v);
                                 break;
@@ -1036,11 +1037,13 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
             };
             let _ = app.emit("whisper-log", format!("phase=uploading-elevenlabs:{model_id}"));
             let out_json = tmp.join(format!("ics_el_resp_{}_{}.json", std::process::id(), nonce));
+            let el_mime = if upload_path.extension().and_then(|s| s.to_str()) == Some("mp3") { "audio/mpeg" } else { "audio/wav" };
+            let el_fname = upload_path.file_name().and_then(|s| s.to_str()).unwrap_or("audio.mp3");
             let mut args: Vec<String> = vec![
                 "-X".into(), "POST".into(),
                 "-o".into(), out_json.display().to_string(),
                 "-w".into(), "%{http_code}".into(),
-                "-F".into(), format!("file=@\"{}\"", upload_path.display()),
+                "-F".into(), format!("file=@{};type={};filename={}", upload_path.display(), el_mime, el_fname),
                 "-F".into(), format!("model_id={model_id}"),
                 "-F".into(), "timestamps_granularity=word".into(),
                 "-F".into(), format!("tag_audio_events={}", if tag_audio_events.unwrap_or(false) { "true" } else { "false" }),

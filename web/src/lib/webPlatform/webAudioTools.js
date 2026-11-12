@@ -113,7 +113,7 @@ export async function extractAsrWavChunks(fileOrBlob, onProgress) {
           startOffsetSec: 0,
           durationSec: 0,
           overlapSec: 0,
-          mimeType: fileOrBlob.type || 'audio/mp4',
+          mimeType: (fileOrBlob.type && !fileOrBlob.type.includes('aac')) ? fileOrBlob.type : 'audio/mp4',
           wavBytes: bytes,
         }],
       };

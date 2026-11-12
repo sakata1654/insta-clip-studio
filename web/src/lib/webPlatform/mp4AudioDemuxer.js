@@ -319,7 +319,7 @@ export async function extractMp4AacChunks(file, onProgress, { chunkSec = 105, ov
       startOffsetSec: startSec,
       durationSec: chunkDur,
       overlapSec: startIdx > 0 ? overlapSec : 0,
-      mimeType: 'audio/aac',
+      mimeType: 'audio/m4a',
       wavBytes: aacBytes,
     });
 
