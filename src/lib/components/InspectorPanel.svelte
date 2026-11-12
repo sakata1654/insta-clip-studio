@@ -14,7 +14,7 @@
     studio.texts.find((t) => t.id === studio.sel) || null
   );
   const selSub = $derived(
-    studio.subs.find((s) => s.id === (studio.sel || studio.act)) || null
+    studio.subs.find((s) => s.id === studio.sel) || null
   );
 
   const contextLabel = $derived.by(() => {
@@ -56,8 +56,8 @@
         type="button"
         class="xs ghost"
         onclick={() => {
-          studio.selectedOverlayId = null;
-          studio.sel = null;
+          studio.clearSelection();
+          studio.act = null;
         }}
         title="Clear selection"
       >
