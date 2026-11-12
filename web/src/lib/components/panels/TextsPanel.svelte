@@ -47,7 +47,7 @@
   </button>
 
   {#each studio.texts as o, i (o.id)}
-    <div class="sub-card" style={studio.sel === o.id ? 'border-color:var(--accent)' : ''}>
+    <div class="sub-card" style="{studio.sel === o.id ? 'border-color:var(--accent);' : ''}{o.enabled === false ? 'opacity:0.55;' : ''}">
       <div class="rt" style="justify-content:space-between;margin-bottom:6px">
         <button
           type="button"
@@ -63,6 +63,18 @@
         </button>
         <div class="rt" style="gap:3px">
           <span class="badge mono">{fmt(o.s)}</span>
+          <button
+            type="button"
+            class="xs"
+            onclick={() => {
+              o.enabled = o.enabled === false;
+              studio.inv();
+              studio.snap();
+            }}
+            title={o.enabled === false ? 'Show layer' : 'Hide layer'}
+          >
+            <Icon name={o.enabled === false ? 'eye-off' : 'eye'} size={11} />
+          </button>
           <button type="button" class="xs" onclick={() => ((studio.sel = o.id), studio.seek(o.s))} title="Select & Jump">Edit</button>
           <button
             type="button"

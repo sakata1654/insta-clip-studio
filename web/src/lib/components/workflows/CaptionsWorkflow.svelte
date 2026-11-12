@@ -1,4 +1,5 @@
 <script>
+  import { getCachedAsr, makeAsrCacheKey, setCachedAsr } from '../../asrCache.js';
   import { transcriptionDuration, transcriptionFile } from '../../mediaHelpers.js';
   import {
     aiCallJson,
@@ -14,16 +15,20 @@
   import { fvtt, fts, studio } from '../../state.svelte.js';
   import { transcribeMediaWeb } from '../../webPlatform/webAiClient.js';
   import CategoryBlock from '../CategoryBlock.svelte';
+  import Icon from '../Icon.svelte';
+  import StyleWorkflow from './StyleWorkflow.svelte';
 
-  let subTab = $state('gen'); // 'gen' | 'edit' | 'tr'
+  let showAdvAsr = $state(false);
 
   // Web Cloud ASR state
   let eng = $state(
-    typeof localStorage !== 'undefined' && ['elevenlabs', 'openai'].includes(localStorage.icsAsrEngine)
+    typeof localStorage !== 'undefined' && ['groq', 'elevenlabs', 'openai'].includes(localStorage.icsAsrEngine)
       ? localStorage.icsAsrEngine
-      : 'elevenlabs'
+      : 'groq'
   );
+  let groqModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsGroqAsrModel') || 'whisper-large-v3' : 'whisper-large-v3');
   let elModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsElModel') || 'scribe_v2' : 'scribe_v2');
+  let groqKey = $state(studio.ovrGet().groq_key || '');
   let elKey = $state(studio.ovrGet().elevenlabs_key || '');
   let oaAsrKey = $state(studio.ovrGet().openai_key || '');
   let elDiarize = $state(false);
@@ -67,19 +72,26 @@
 
   function saveElKey() {
     const o = studio.ovrGet();
+    o.groq_key = groqKey.trim();
     o.elevenlabs_key = elKey.trim();
     o.openai_key = oaAsrKey.trim();
     localStorage.icsOvr = JSON.stringify(o);
-    elStatus = o.elevenlabs_key || o.openai_key ? 'Saved in browser session ✔' : 'Cleared optional override';
+    elStatus = o.groq_key || o.elevenlabs_key || o.openai_key ? 'Saved in browser session ✔' : 'Cleared optional override';
   }
 
   async function generateSubs() {
     const mediaFile = await transcriptionFile();
     if (!mediaFile) return studio.toast('Import a video or audio file first.');
-    const activeEng = eng === 'openai' ? 'openai' : 'elevenlabs';
-    const userKey = activeEng === 'elevenlabs' ? elKey.trim() || studio.ovrGet().elevenlabs_key || '' : oaAsrKey.trim() || studio.ovrGet().openai_key || '';
+    const activeEng = ['groq', 'openai', 'elevenlabs'].includes(eng) ? eng : 'groq';
+    const activeModel = activeEng === 'groq' ? groqModel : activeEng === 'elevenlabs' ? elModel : whisperModel;
+    const userKey =
+      activeEng === 'groq'
+        ? groqKey.trim() || studio.ovrGet().groq_key || ''
+        : activeEng === 'elevenlabs'
+          ? elKey.trim() || studio.ovrGet().elevenlabs_key || ''
+          : oaAsrKey.trim() || studio.ovrGet().openai_key || '';
     if (!userKey && !studio.serverHealth?.providers?.[activeEng]) {
-      elStatus = `No server ${activeEng} key detected — add your API key above or configure Vercel env var.`;
+      elStatus = `No server ${activeEng} key detected — add your API key below or configure Vercel env var.`;
       return studio.toast('Configure API key for transcription first.');
     }
 
@@ -87,21 +99,36 @@
     pct = 0;
     try {
       const durHint = await transcriptionDuration();
-      const out = await transcribeMediaWeb({
-        file: mediaFile,
+      const cacheKey = makeAsrCacheKey({
+        name: mediaFile.name || 'media',
+        size: mediaFile.size || 0,
+        dur: studio.dur || studio.audioDuration || durHint || 0,
         engine: activeEng,
+        model: activeModel,
         lang,
-        model: activeEng === 'elevenlabs' ? elModel : whisperModel,
-        maxWords: studio.subCfg.maxWords || 12,
-        diarize: elDiarize,
-        tagAudioEvents: elTags,
-        prompt: hints.trim(),
-        userKey,
-        onProgress: (p, msg) => {
-          pct = p;
-          status = msg;
-        },
+        prompt: hints,
       });
+
+      let out = getCachedAsr(cacheKey);
+      let fromCache = !!out;
+      if (!out) {
+        out = await transcribeMediaWeb({
+          file: mediaFile,
+          engine: activeEng,
+          lang,
+          model: activeModel,
+          maxWords: studio.subCfg.maxWords || 12,
+          diarize: elDiarize,
+          tagAudioEvents: elTags,
+          prompt: hints.trim(),
+          userKey,
+          onProgress: (p, msg) => {
+            pct = p;
+            status = msg;
+          },
+        });
+        if (out?.segments?.length) setCachedAsr(cacheKey, out);
+      }
 
       const mc = studio.subCfg.maxChars || 84;
       const mw = studio.subCfg.maxWords || 12;
@@ -116,10 +143,10 @@
       );
       studio.expandPipeSubtitles(false);
       pct = 100;
-      status = `${studio.subs.length} cues ready (target ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
+      status = `${studio.subs.length} cues ready${fromCache ? ' (cached)' : ''} (target ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
       studio.inv();
       studio.snap();
-      subTab = 'edit';
+      studio.subTab = 'edit';
     } catch (e) {
       status = 'Error: ' + (e?.message || e);
     } finally {
@@ -181,64 +208,73 @@
     studio.subs = studio.parseSRT(await f.text());
     studio.inv();
     studio.snap();
-    subTab = 'edit';
+    studio.subTab = 'edit';
     inp.value = '';
   }}
 />
 
 <div class="seg-pills tri">
-  <button type="button" class:on={subTab === 'gen'} onclick={() => (subTab = 'gen')}>1. Transcribe</button>
-  <button type="button" class:on={subTab === 'edit'} onclick={() => (subTab = 'edit')}>2. Cues ({studio.subs.length})</button>
-  <button type="button" class:on={subTab === 'tr'} onclick={() => (subTab = 'tr')}>3. Translate</button>
+  <button type="button" class:on={studio.subTab === 'gen'} onclick={() => (studio.subTab = 'gen')}>Generate</button>
+  <button type="button" class:on={studio.subTab === 'edit'} onclick={() => (studio.subTab = 'edit')}>Edit ({studio.subs.length})</button>
+  <button type="button" class:on={studio.subTab === 'style'} onclick={() => (studio.subTab = 'style')}>Style</button>
 </div>
 
-{#if subTab === 'gen'}
-  <CategoryBlock title="Cloud Speech-to-Text (Audio-Only Extraction)" icon="subtitles" open={true}>
-    <div class="seg-pills">
-      <button type="button" class:on={eng === 'elevenlabs'} onclick={() => setEngine('elevenlabs')}>☁ ElevenLabs Scribe 2</button>
-      <button type="button" class:on={eng === 'openai'} onclick={() => setEngine('openai')}>☁ OpenAI Whisper</button>
+{#if studio.subTab === 'gen'}
+  <CategoryBlock title="Generate Subtitles" icon="subtitles" open={true}>
+    <div class="sg" style="margin-bottom:8px">
+      <label>
+        Provider
+        <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
+          <option value="groq">Groq</option>
+          <option value="elevenlabs">ElevenLabs</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </label>
+      <label>
+        Model
+        {#if eng === 'groq'}
+          <select bind:value={groqModel} onchange={() => { try { localStorage.icsGroqAsrModel = groqModel; } catch {} }}>
+            <option value="whisper-large-v3">Whisper Large V3</option>
+            <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo</option>
+          </select>
+        {:else if eng === 'elevenlabs'}
+          <select bind:value={elModel} onchange={() => { try { localStorage.icsElModel = elModel; } catch {} }}>
+            <option value="scribe_v2">Scribe v2</option>
+            <option value="scribe_v1">Scribe v1</option>
+          </select>
+        {:else}
+          <select bind:value={whisperModel}>
+            <option value="whisper-1">Whisper-1</option>
+          </select>
+        {/if}
+      </label>
     </div>
 
-    {#if eng === 'elevenlabs'}
-      <div class="sub-card">
-        <div class="rt" style="justify-content:space-between;margin-bottom:6px">
-          <span class="hint" style="margin:0">Arabic/Urdu word timestamps &amp; diarization</span>
-          <span class="badge" class:ok={studio.serverHealth?.providers?.elevenlabs}>
-            {studio.serverHealth?.providers?.elevenlabs ? 'Server Key Active' : 'BYOK'}
-          </span>
-        </div>
-        <select bind:value={elModel} style="width:100%;margin-bottom:6px">
-          <option value="scribe_v2">Scribe v2 (Best Accuracy + Keyterms)</option>
-          <option value="scribe_v1">Scribe v1</option>
-        </select>
+    {#if eng === 'groq' && !groqKey && !studio.serverHealth?.providers?.groq}
+      <div class="sub-card" style="margin-bottom:8px">
         <div class="rt">
-          <input type="password" bind:value={elKey} placeholder={studio.serverHealth?.providers?.elevenlabs ? 'Optional BYOK override…' : 'ElevenLabs xi-api-key'} style="flex:1;min-width:0" />
+          <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
           <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
         </div>
         {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
       </div>
-    {:else}
-      <div class="sub-card">
-        <div class="rt" style="justify-content:space-between;margin-bottom:6px">
-          <span class="hint" style="margin:0">OpenAI Cloud Whisper</span>
-          <span class="badge" class:ok={studio.serverHealth?.providers?.openai}>
-            {studio.serverHealth?.providers?.openai ? 'Server Key Active' : 'BYOK'}
-          </span>
-        </div>
-        <select bind:value={whisperModel} style="width:100%;margin-bottom:6px">
-          <option value="whisper-1">whisper-1 (Word Timestamps)</option>
-        </select>
+    {:else if eng === 'elevenlabs' && !elKey && !studio.serverHealth?.providers?.elevenlabs}
+      <div class="sub-card" style="margin-bottom:8px">
         <div class="rt">
-          <input type="password" bind:value={oaAsrKey} placeholder={studio.serverHealth?.providers?.openai ? 'Optional OpenAI key override…' : 'OpenAI sk-... key'} style="flex:1;min-width:0" />
+          <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
+          <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
+        </div>
+        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+      </div>
+    {:else if eng === 'openai' && !oaAsrKey && !studio.serverHealth?.providers?.openai}
+      <div class="sub-card" style="margin-bottom:8px">
+        <div class="rt">
+          <input type="password" bind:value={oaAsrKey} placeholder="OpenAI sk-... key" style="flex:1;min-width:0" />
           <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
         </div>
         {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
       </div>
     {/if}
-
-    <div class="hint" style="margin:6px 0">
-      Privacy: Videos stay on your device. Only downsampled 16 kHz mono WAV audio chunks are sent to the transcription service.
-    </div>
 
     <div class="sg">
       <label>
@@ -252,7 +288,7 @@
         </select>
       </label>
       <label>
-        Style
+        Content Style
         <select bind:value={genre}>
           <option value="speech">Speech / Lecture</option>
           <option value="poetry">Poem / Qasida</option>
@@ -261,27 +297,79 @@
       </label>
     </div>
 
-    <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-top:8px" />
-  </CategoryBlock>
-
-  <CategoryBlock title="Natural Segmentation (Target: 8–12w · 500ms)" icon="sliders" open={true}>
-    <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
-      <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
-      <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
-      <label>Pad after ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
-    </div>
     <div class="bar" style="margin-top:10px;margin-bottom:2px">
       <button type="button" class="pri" style="flex:1" disabled={busy} onclick={generateSubs}>
         {busy ? 'Transcribing…' : 'Generate Subtitles'}
       </button>
-      <button type="button" class="sm" onclick={() => studio.rewrapAndPad()} title="Apply word limit and padding">
-        Re-wrap
-      </button>
     </div>
     <div class="pbar"><i style="width:{pct}%"></i></div>
     {#if status}<div class="hint" style="margin:2px 0 0">{status}</div>{/if}
+
+    <button type="button" class="adv-toggle" aria-expanded={showAdvAsr} onclick={() => (showAdvAsr = !showAdvAsr)}>
+      <span>Advanced Transcription &amp; Segmentation</span>
+      <Icon name={showAdvAsr ? 'chev-up' : 'chev-down'} size={13} />
+    </button>
+
+    {#if showAdvAsr}
+      <div class="adv-box">
+        {#if eng === 'groq'}
+          <div class="sub-card" style="margin-bottom:8px">
+            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+              <span class="hint" style="margin:0">Groq Whisper Large V3 (Word Timestamps)</span>
+              <span class="badge" class:ok={studio.serverHealth?.providers?.groq}>
+                {studio.serverHealth?.providers?.groq ? 'Server Key Active' : 'BYOK'}
+              </span>
+            </div>
+            <div class="rt">
+              <input type="password" bind:value={groqKey} placeholder={studio.serverHealth?.providers?.groq ? 'Optional BYOK override…' : 'Groq API Key (gsk_…)'} style="flex:1;min-width:0" />
+              <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
+            </div>
+            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+          </div>
+        {:else if eng === 'elevenlabs'}
+          <div class="sub-card" style="margin-bottom:8px">
+            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+              <span class="hint" style="margin:0">Word timestamps &amp; diarization</span>
+              <span class="badge" class:ok={studio.serverHealth?.providers?.elevenlabs}>
+                {studio.serverHealth?.providers?.elevenlabs ? 'Server Key Active' : 'BYOK'}
+              </span>
+            </div>
+            <div class="rt">
+              <input type="password" bind:value={elKey} placeholder={studio.serverHealth?.providers?.elevenlabs ? 'Optional BYOK override…' : 'ElevenLabs xi-api-key'} style="flex:1;min-width:0" />
+              <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
+            </div>
+            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+          </div>
+        {:else}
+          <div class="sub-card" style="margin-bottom:8px">
+            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+              <span class="hint" style="margin:0">OpenAI Cloud Whisper</span>
+              <span class="badge" class:ok={studio.serverHealth?.providers?.openai}>
+                {studio.serverHealth?.providers?.openai ? 'Server Key Active' : 'BYOK'}
+              </span>
+            </div>
+            <div class="rt">
+              <input type="password" bind:value={oaAsrKey} placeholder={studio.serverHealth?.providers?.openai ? 'Optional OpenAI key override…' : 'OpenAI sk-... key'} style="flex:1;min-width:0" />
+              <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
+            </div>
+            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+          </div>
+        {/if}
+
+        <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-bottom:8px" />
+
+        <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
+          <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
+          <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
+          <label>Pad after ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
+        </div>
+        <button type="button" class="xs" style="width:100%;margin-top:6px" onclick={() => studio.rewrapAndPad()}>
+          Re-wrap Existing Subtitles
+        </button>
+      </div>
+    {/if}
   </CategoryBlock>
-{:else if subTab === 'edit'}
+{:else if studio.subTab === 'edit'}
   <div class="bar">
     <button type="button" class="xs" onclick={() => srtInput?.click()}>Import SRT</button>
     <button type="button" class="xs" onclick={() => saveBlob(new Blob([studio.subs.map((s, i) => `${i + 1}\n${fts(s.s)} --> ${fts(s.e)}\n${s.t}\n`).join('\n')], { type: 'text/plain' }), 'subtitles.srt')}>Export SRT</button>
@@ -307,7 +395,7 @@
         }
       }}
     >
-      AI Arrange
+      AI Smart Split
     </button>
     <button
       type="button"
@@ -393,10 +481,10 @@
       {/if}
     </div>
   {:else}
-    <div class="hint">No subtitles yet. Switch to <b>1. Transcribe</b> or click Import SRT.</div>
+    <div class="hint">No subtitles yet. Switch to <b>Generate</b> or click Import SRT.</div>
   {/each}
-{:else}
-  <CategoryBlock title="AI Translation & Dual Subtitles" icon="languages" open={true}>
+
+  <CategoryBlock title="Bilingual Translation" icon="languages" open={false}>
     <div class="sg">
       <label>To Language<input bind:value={studio.TR.tgt} /></label>
       <label>
@@ -433,9 +521,11 @@
     <div class="pbar"><i style="width:{trPct}%"></i></div>
     {#if trStatus}<div class="hint">{trStatus}</div>{/if}
     <button type="button" class="sm" style="width:100%;margin-top:6px" onclick={() => (studio.nav = 'tr')}>
-      Open Fullscreen Bilingual Translator →
+      Open Translation Desk →
     </button>
   </CategoryBlock>
+{:else}
+  <StyleWorkflow />
 {/if}
 
 <style>

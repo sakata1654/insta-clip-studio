@@ -163,15 +163,6 @@
 
     {#if !viewport.isMobile}
       <span class="v-div"></span>
-      <button
-        type="button"
-        class="sm ghost icon-btn"
-        onclick={() => studio.applyUiTheme(studio.uiTheme === 'light' ? 'dark' : 'light')}
-        title={studio.uiTheme === 'light' ? 'Switch to Dark Graphite theme' : 'Switch to Clean Light theme'}
-        aria-label="Toggle color theme"
-      >
-        <Icon name={studio.uiTheme === 'light' ? 'moon' : 'sun'} size={14} />
-      </button>
 
       <button
         type="button"
@@ -184,19 +175,16 @@
         <span class="status-dot" style="background:{missingReq ? 'var(--accent-amber)' : 'var(--accent-green)'}"></span>
       </button>
 
-      <span class="v-div"></span>
-
       <button type="button" class="sm" onclick={saveToLibrary} title="Save Project (Ctrl+S)">
         <Icon name="save" size={13} />
         <span>Save</span>
       </button>
-
-      {#if !viewport.isTablet}
-        <button type="button" class="sm ghost" onclick={exportProjectJson} title="Export portable .icproj.json">
-          <span>.JSON</span>
-        </button>
-      {/if}
     {/if}
+
+    <button type="button" class="sm pri" onclick={() => (studio.exportModalOpen = true)} title="Export Video & Social Caption">
+      <Icon name="upload" size={13} />
+      {#if !viewport.isSmallMobile}<span>Export</span>{/if}
+    </button>
 
     {#if studio.exportJobs.length}
       <div class="jobs-wrap">
@@ -340,7 +328,7 @@
     width: 24px;
     height: 24px;
     border-radius: var(--radius-sm);
-    background: #474b33;
+    background: #414127;
     overflow: hidden;
     display: grid;
     place-items: center;

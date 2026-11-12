@@ -370,6 +370,7 @@ async fn env_check() -> Result<String, String> {
         Ok(json!({
             "cohere": { "runtime": ok_rt, "version": cver, "models": cm, "token": ovr("hf_token").is_some() },
             "elevenlabs": { "key": ovr("elevenlabs_key").is_some() },
+            "groq": { "key": ovr("groq_key").is_some() },
             "python": { "ok": py.is_some(), "version": pyver },
             "pkgs": pkgs,
             "yt_dlp": { "ok": yt.is_some() || pkgs["yt_dlp"] == true, "path": yt.map(|p| p.display().to_string()), "module": pkgs["yt_dlp"] == true },
@@ -796,14 +797,217 @@ async fn test_elevenlabs(key: Option<String>) -> Result<String, String> {
     }).await.map_err(|e| e.to_string())?
 }
 
-// ---------------------------------------------------------------- transcription (faster-whisper, Cohere Transcribe, ElevenLabs Scribe, or whisper.cpp)
+fn curl_with_bearer(args: &[String], api_key: &str) -> Result<(u16, String, String), String> {
+    let safe_key: String = api_key.trim().chars().filter(|c| *c != '"' && *c != '\r' && *c != '\n').collect();
+    if safe_key.is_empty() {
+        return Err("API key is empty.".into());
+    }
+    let mut c = Command::new("curl.exe");
+    nowin(&mut c);
+    c.args(["-s", "-S", "-L", "-K", "-"])
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = c.spawn().map_err(|e| format!("Could not start curl.exe: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let cfg = format!("header = \"Authorization: Bearer {safe_key}\"\n");
+        let _ = stdin.write_all(cfg.as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| format!("curl.exe failed: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if !out.status.success() && stdout.trim().is_empty() {
+        return Err(if stderr.is_empty() { format!("Network request failed ({})", out.status) } else { stderr });
+    }
+    let code = stdout.trim().parse::<u16>().unwrap_or(0);
+    Ok((code, stdout, stderr))
+}
+
+fn norm_word_tok(w: &str) -> String {
+    w.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+}
+
+fn groq_words_to_segments(words: &[(f64, f64, String)], fallback_text: &str, max_words: usize) -> Vec<Value> {
+    if words.is_empty() {
+        let t = fallback_text.trim();
+        return if t.is_empty() { vec![] } else { vec![json!({ "s": 0.0, "e": 4.0, "t": t, "w": [] })] };
+    }
+    let container_max = (max_words.max(3) * 2).max(24);
+    let mut segs: Vec<Value> = Vec::new();
+    let mut cur: Vec<(f64, f64, String)> = Vec::new();
+    let flush = |cur: &mut Vec<(f64, f64, String)>, segs: &mut Vec<Value>| {
+        if cur.is_empty() { return; }
+        let s = cur[0].0;
+        let e = cur[cur.len() - 1].1;
+        let text = cur.iter().map(|x| x.2.as_str()).collect::<Vec<_>>().join(" ");
+        let ws: Vec<Value> = cur.iter().map(|(ws, we, wt)| json!({ "w": wt, "s": ws, "e": we })).collect();
+        segs.push(json!({ "s": s, "e": e, "t": text, "w": ws }));
+        cur.clear();
+    };
+    for (s, e, text) in words {
+        let prev_end = cur.last().map(|x| x.1).unwrap_or(*s);
+        let gap = *s - prev_end;
+        if !cur.is_empty() && (cur.len() >= container_max || gap >= 0.85) {
+            flush(&mut cur, &mut segs);
+        }
+        cur.push((*s, *e, text.clone()));
+        if cur.len() >= 3 && text.ends_with(['.', '!', '?', '؟', '۔', '…']) {
+            flush(&mut cur, &mut segs);
+        }
+    }
+    flush(&mut cur, &mut segs);
+    segs
+}
+
+// ---------------------------------------------------------------- transcription (faster-whisper, Cohere Transcribe, ElevenLabs Scribe, Groq Whisper, or whisper.cpp)
 #[tauri::command]
-async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, max_words: Option<u32>, translate: bool, model: String, prompt: String, ctx: bool, det: bool, engine: String, duration_hint: Option<f64>, diarize: Option<bool>, tag_audio_events: Option<bool>, elevenlabs_key: Option<String>) -> Result<String, String> {
+async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, max_words: Option<u32>, translate: bool, model: String, prompt: String, ctx: bool, det: bool, engine: String, duration_hint: Option<f64>, diarize: Option<bool>, tag_audio_events: Option<bool>, elevenlabs_key: Option<String>, groq_key: Option<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let tmp = std::env::temp_dir();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros()).unwrap_or_default();
         let total = duration_hint.filter(|v| v.is_finite() && *v > 0.0).or_else(|| probe_media_duration(&input));
         let _ = app.emit("whisper-log", "extract-progress=0%");
+
+        if engine == "groq" {
+            let api_key = groq_key.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| ovr("groq_key"))
+                .ok_or("Add your Groq API key in Subtitles or Settings first.")?;
+            let model_id = if model.trim().is_empty() || model == "auto" { "whisper-large-v3".to_string() } else { model.trim().to_string() };
+            let total_dur = total.unwrap_or(0.0);
+            let chunk_sec: f64 = 540.0; // 9-min chunks (~4.3 MB at 64kbps MP3, well below Groq 25 MB limit)
+            let overlap_sec: f64 = 4.0;
+            let mut ranges: Vec<(f64, f64)> = Vec::new();
+            if total_dur <= chunk_sec || total_dur <= 0.0 {
+                ranges.push((0.0, total_dur));
+            } else {
+                let step = chunk_sec - overlap_sec;
+                let mut t0 = 0.0;
+                while t0 < total_dur {
+                    let t1 = (t0 + chunk_sec).min(total_dur);
+                    ranges.push((t0, t1));
+                    if t1 >= total_dur { break; }
+                    t0 += step;
+                }
+            }
+
+            let mut all_words: Vec<(f64, f64, String)> = Vec::new();
+            let mut fallback_texts: Vec<String> = Vec::new();
+            let mut detected_lang = String::new();
+            let mut failed_chunks: Vec<String> = Vec::new();
+            let n_chunks = ranges.len();
+
+            for (ci, (t0, t1)) in ranges.iter().enumerate() {
+                let chunk_mp3 = tmp.join(format!("ics_groq_{}_{}_{}.mp3", std::process::id(), nonce, ci));
+                let mut ext = ffmpeg()?;
+                let mut ff_args: Vec<String> = vec!["-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into()];
+                if *t0 > 0.0 {
+                    ff_args.push("-ss".into());
+                    ff_args.push(format!("{:.3}", t0));
+                }
+                if *t1 > *t0 {
+                    ff_args.push("-t".into());
+                    ff_args.push(format!("{:.3}", t1 - t0));
+                }
+                ff_args.extend(["-i".into(), input.clone(), "-map".into(), "0:a:0".into(), "-vn".into(), "-ac".into(), "1".into(), "-ar".into(), "16000".into(), "-c:a".into(), "libmp3lame".into(), "-b:a".into(), "64k".into(), chunk_mp3.display().to_string()]);
+                ext.args(&ff_args);
+                let out_ext = ext.output().map_err(|e| format!("Audio chunking failed: {e}"))?;
+                if !out_ext.status.success() || !chunk_mp3.is_file() {
+                    let _ = std::fs::remove_file(&chunk_mp3);
+                    failed_chunks.push(format!("chunk {}: audio extraction failed", ci + 1));
+                    continue;
+                }
+
+                let _ = app.emit("whisper-log", format!("phase=uploading-groq:{}/{}", ci + 1, n_chunks));
+                let out_json = tmp.join(format!("ics_groq_resp_{}_{}_{}.json", std::process::id(), nonce, ci));
+                let mut args: Vec<String> = vec![
+                    "-X".into(), "POST".into(),
+                    "-o".into(), out_json.display().to_string(),
+                    "-w".into(), "%{http_code}".into(),
+                    "-F".into(), format!("file=@\"{}\"", chunk_mp3.display()),
+                    "-F".into(), format!("model={model_id}"),
+                    "-F".into(), "response_format=verbose_json".into(),
+                    "-F".into(), "timestamp_granularities[]=word".into(),
+                    "-F".into(), "timestamp_granularities[]=segment".into(),
+                    "-F".into(), "temperature=0".into(),
+                ];
+                let lang_trim = lang.trim();
+                if !lang_trim.is_empty() && lang_trim != "auto" {
+                    args.push("-F".into());
+                    args.push(format!("language={lang_trim}"));
+                }
+                if !prompt.trim().is_empty() {
+                    let clipped: String = prompt.trim().chars().take(400).collect();
+                    args.push("-F".into());
+                    args.push(format!("prompt={clipped}"));
+                }
+                args.push("https://api.groq.com/openai/v1/audio/transcriptions".into());
+
+                let mut parsed_ok: Option<Value> = None;
+                let mut last_err = String::new();
+                for attempt in 0..3 {
+                    let curl_res = curl_with_bearer(&args, &api_key);
+                    let body = std::fs::read_to_string(&out_json).unwrap_or_default();
+                    match curl_res {
+                        Ok((code, _, stderr)) if code >= 200 && code < 300 => {
+                            if let Ok(v) = serde_json::from_str::<Value>(&body) {
+                                parsed_ok = Some(v);
+                                break;
+                            } else {
+                                last_err = format!("Invalid JSON from Groq (HTTP {code})");
+                            }
+                        }
+                        Ok((code, _, stderr)) => {
+                            let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                            let msg = parsed.get("error").and_then(|e| e.get("message").or(Some(e))).and_then(|v| v.as_str())
+                                .unwrap_or(if stderr.is_empty() { body.trim() } else { &stderr });
+                            last_err = format!("Groq HTTP {code}: {msg}");
+                            if code != 429 && code < 500 { break; }
+                        }
+                        Err(e) => {
+                            last_err = e;
+                        }
+                    }
+                    if attempt < 2 {
+                        std::thread::sleep(std::time::Duration::from_millis(1200 * (1 << attempt)));
+                    }
+                }
+                let _ = std::fs::remove_file(&chunk_mp3);
+                let _ = std::fs::remove_file(&out_json);
+
+                let Some(parsed) = parsed_ok else {
+                    failed_chunks.push(format!("chunk {}: {}", ci + 1, last_err));
+                    continue;
+                };
+
+                if detected_lang.is_empty() {
+                    detected_lang = parsed.get("language").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                }
+                let txt = parsed.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                if !txt.is_empty() { fallback_texts.push(txt); }
+
+                let prev_end = all_words.last().map(|w| w.1).unwrap_or(-1.0);
+                let words_arr = parsed.get("words").and_then(|v| v.as_array()).map(|v| v.as_slice()).unwrap_or(&[]);
+                for w in words_arr {
+                    let wt = w.get("word").or_else(|| w.get("text")).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                    if wt.is_empty() { continue; }
+                    let ws = w.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0) + *t0;
+                    let we = (w.get("end").and_then(|v| v.as_f64()).unwrap_or(ws + 0.15) + *t0).max(ws + 0.04);
+                    if ci > 0 && prev_end > 0.0 && ws < prev_end + 0.35 {
+                        let tail = all_words.iter().rev().take(8).any(|pw| (pw.0 - ws).abs() < 1.2 && !norm_word_tok(&pw.2).is_empty() && norm_word_tok(&pw.2) == norm_word_tok(&wt));
+                        if tail || we <= prev_end - 0.1 { continue; }
+                    }
+                    all_words.push((ws, we, wt));
+                }
+            }
+
+            if all_words.is_empty() && fallback_texts.is_empty() && !failed_chunks.is_empty() {
+                return Err(failed_chunks.join("; "));
+            }
+            let mw = max_words.unwrap_or(12) as usize;
+            let segs = groq_words_to_segments(&all_words, &fallback_texts.join(" "), mw);
+            let _ = app.emit("whisper-log", "progress = 100%");
+            return Ok(json!({ "segments": segs, "engine": "groq", "model": model_id, "language_code": detected_lang, "failed_chunks": failed_chunks }).to_string());
+        }
 
         if engine == "elevenlabs" {
             let api_key = elevenlabs_key.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| ovr("elevenlabs_key"))

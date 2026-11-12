@@ -258,10 +258,10 @@
     <!-- Homepage Header -->
     <header class="home-topbar">
       <div class="rt" style="gap:10px">
-        <div class="home-logo"><img src="/app-icon.png" alt="Tibyan Studio" class="home-pfp" /></div>
+        <div class="home-logo"><img src="/tibyan-logo.jpg" alt="Tibyan Studio" class="home-pfp" /></div>
         <div>
           <div class="rt" style="gap:8px">
-            <span class="home-brand">Tibyan Studio</span>
+            <span class="home-brand sr-only-brand">Tibyan Studio</span>
             <span class="badge">v1.5</span>
           </div>
           <span class="home-sub">Desktop Video &amp; Caption Workspace</span>
@@ -501,21 +501,29 @@
   }
 
   .home-logo {
-    width: 34px;
-    height: 34px;
+    height: 40px;
+    width: auto;
     border-radius: var(--radius-md);
-    background: #474b33;
+    background: #414127;
+    border: 1px solid rgba(223, 198, 122, 0.35);
     overflow: hidden;
-    color: #ffffff;
-    display: grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
   }
   .home-pfp {
-    width: 100%;
     height: 100%;
+    width: auto;
     object-fit: cover;
     display: block;
+  }
+  .sr-only-brand {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
 
   .home-brand {

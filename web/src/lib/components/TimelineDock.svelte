@@ -616,7 +616,7 @@
                 class:on={studio.selectedOverlayId === o.id}
                 data-id={o.id}
                 data-tr="ov"
-                style="left:{((o.start || 0) / d) * 100}%;width:{Math.max((((o.end || d) - (o.start || 0)) / d) * 100, 0.2)}%"
+                style="left:{((o.start || 0) / d) * 100}%;width:{Math.max((((o.end || d) - (o.start || 0)) / d) * 100, 0.2)}%;{o.enabled === false ? 'opacity:0.4;filter:grayscale(0.6);' : ''}"
               >
                 {o.name}
               </div>
@@ -630,7 +630,7 @@
                 class:on={studio.sel === o.id}
                 data-id={o.id}
                 data-tr="tx"
-                style="left:{(o.s / d) * 100}%;width:{Math.max(((o.e - o.s) / d) * 100, 0.2)}%"
+                style="left:{(o.s / d) * 100}%;width:{Math.max(((o.e - o.s) / d) * 100, 0.2)}%;{o.enabled === false ? 'opacity:0.4;filter:grayscale(0.6);' : ''}"
               >
                 {o.t}
               </div>

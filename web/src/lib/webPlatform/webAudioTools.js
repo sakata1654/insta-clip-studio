@@ -8,6 +8,7 @@
 
 const SAMPLE_RATE_ASR = 16000;
 const CHUNK_SECONDS_ASR = 105; // 105s * 16000 * 2 bytes = ~3.36 MB WAV (< 4.2 MB Vercel body cap!)
+const OVERLAP_SECONDS_ASR = 4; // 4s overlap prevents losing words across chunk boundaries
 
 export async function decodeMediaAudio(fileOrBlob) {
   if (!fileOrBlob) throw new Error('No media file provided for audio decoding.');
@@ -82,15 +83,19 @@ export async function extractAsrWavChunks(fileOrBlob, onProgress) {
   const mono = rendered.getChannelData(0);
 
   const maxChunkSamples = CHUNK_SECONDS_ASR * SAMPLE_RATE_ASR;
+  const overlapSamples = Math.min(OVERLAP_SECONDS_ASR * SAMPLE_RATE_ASR, Math.floor(maxChunkSamples / 4));
+  const stepSamples = mono.length > maxChunkSamples ? maxChunkSamples - overlapSamples : maxChunkSamples;
   const chunks = [];
-  for (let offset = 0; offset < mono.length; offset += maxChunkSamples) {
+  for (let offset = 0; offset < mono.length; offset += stepSamples) {
     const end = Math.min(mono.length, offset + maxChunkSamples);
     const wavBytes = encodeWavMono16(mono.subarray(offset, end), SAMPLE_RATE_ASR);
     chunks.push({
       startOffsetSec: offset / SAMPLE_RATE_ASR,
       durationSec: (end - offset) / SAMPLE_RATE_ASR,
+      overlapSec: offset > 0 ? OVERLAP_SECONDS_ASR : 0,
       wavBytes,
     });
+    if (end >= mono.length) break;
   }
   return { duration: dur, chunks };
 }

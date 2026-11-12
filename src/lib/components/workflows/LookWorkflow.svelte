@@ -1,25 +1,21 @@
 <script>
-  import StudioPresetsPanel from '../panels/StudioPresetsPanel.svelte';
+  import CameraPanel from '../panels/CameraPanel.svelte';
   import CanvasWorkflow from './CanvasWorkflow.svelte';
   import EffectsWorkflow from './EffectsWorkflow.svelte';
-  import StyleWorkflow from './StyleWorkflow.svelte';
 
-  let subTab = $state('subtitles'); // 'frame' | 'subtitles' | 'color' | 'presets'
+  let subTab = $state('layout'); // 'layout' | 'color' | 'camera'
 </script>
 
-<div class="seg-pills quad">
-  <button type="button" class:on={subTab === 'frame'} onclick={() => (subTab = 'frame')}>Format</button>
-  <button type="button" class:on={subTab === 'subtitles'} onclick={() => (subTab = 'subtitles')}>Subtitles</button>
-  <button type="button" class:on={subTab === 'color'} onclick={() => (subTab = 'color')}>Color</button>
-  <button type="button" class:on={subTab === 'presets'} onclick={() => (subTab = 'presets')}>Presets</button>
+<div class="seg-pills" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+  <button type="button" class:on={subTab === 'layout'} onclick={() => (subTab = 'layout')}>Layout</button>
+  <button type="button" class:on={subTab === 'color'} onclick={() => (subTab = 'color')}>Color &amp; Glow</button>
+  <button type="button" class:on={subTab === 'camera'} onclick={() => (subTab = 'camera')}>Camera</button>
 </div>
 
-{#if subTab === 'frame'}
+{#if subTab === 'layout'}
   <CanvasWorkflow />
-{:else if subTab === 'subtitles'}
-  <StyleWorkflow />
 {:else if subTab === 'color'}
   <EffectsWorkflow />
 {:else}
-  <StudioPresetsPanel />
+  <CameraPanel />
 {/if}

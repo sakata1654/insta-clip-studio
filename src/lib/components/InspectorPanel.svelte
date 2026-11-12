@@ -1,16 +1,11 @@
 <script>
-  import { studio } from '../state.svelte.js';
+  import { fmt, studio } from '../state.svelte.js';
   import { OVERLAY_PRESETS } from '../mediaHelpers.js';
   import CategoryBlock from './CategoryBlock.svelte';
   import Icon from './Icon.svelte';
   import StyleFieldRow from './StyleFieldRow.svelte';
-  import ExportPanel from './panels/ExportPanel.svelte';
-  import NewsBannerPanel from './panels/NewsBannerPanel.svelte';
-  import OverlaysPanel from './panels/OverlaysPanel.svelte';
+  import StudioPresetsPanel from './panels/StudioPresetsPanel.svelte';
   import TextStyleFields from './panels/TextStyleFields.svelte';
-  import StyleWorkflow from './workflows/StyleWorkflow.svelte';
-
-  let mode = $state('context'); // 'context' | 'style' | 'banners' | 'export'
 
   const selOverlay = $derived(
     (studio.mediaOverlays || []).find((o) => o.id === studio.selectedOverlayId) || null
@@ -23,13 +18,10 @@
   );
 
   const contextLabel = $derived.by(() => {
-    if (mode === 'style') return 'Subtitle Styling';
-    if (mode === 'banners') return 'Banners & Stamps';
-    if (mode === 'export') return 'Export & Audio';
-    if (selOverlay) return `Overlay: ${selOverlay.name}`;
-    if (selText) return 'Selected Text Layer';
-    if (selSub) return 'Selected Subtitle Cue';
-    return 'Quick Inspector';
+    if (selOverlay && !selText) return `Overlay: ${selOverlay.name}`;
+    if (selText) return 'Text Layer Properties';
+    if (selSub) return 'Subtitle Cue Properties';
+    return 'Clip Inspector';
   });
 
   function applyOvPreset(key) {
@@ -59,7 +51,7 @@
       <Icon name="sliders" size={14} />
       <h3 class="insp-title" title={contextLabel}>{contextLabel}</h3>
     </div>
-    {#if mode === 'context' && (selOverlay || selText || selSub)}
+    {#if selOverlay || selText || selSub}
       <button
         type="button"
         class="xs ghost"
@@ -74,26 +66,7 @@
     {/if}
   </div>
 
-  <div style="padding:8px 10px 0">
-    <div class="seg-pills quad" style="margin:0">
-      <button type="button" class:on={mode === 'context'} onclick={() => (mode = 'context')}>Selected</button>
-      <button type="button" class:on={mode === 'style'} onclick={() => (mode = 'style')}>Subtitles</button>
-      <button type="button" class:on={mode === 'banners'} onclick={() => (mode = 'banners')}>Banners</button>
-      <button type="button" class:on={mode === 'export'} onclick={() => (mode = 'export')}>Export</button>
-    </div>
-  </div>
-
   <div class="insp-body">
-    {#if mode === 'style'}
-      <StyleWorkflow />
-    {:else if mode === 'banners'}
-      <NewsBannerPanel />
-      <OverlaysPanel />
-    {:else if mode === 'export'}
-      <ExportPanel modeTab="exp" />
-      <ExportPanel modeTab="aud" />
-      <ExportPanel modeTab="cap" />
-    {:else}
       <!-- Dynamic Context Inspector -->
       {#if selOverlay && !selText}
         <CategoryBlock title="Selected Overlay: {selOverlay.name}" icon="layers" open={true}>
@@ -136,6 +109,29 @@
 
       {#if selText}
         <CategoryBlock title="Selected Text Overlay" icon="type" open={true}>
+          <div class="bar" style="margin-bottom:8px">
+            <button
+              type="button"
+              class="xs"
+              style="flex:1"
+              onclick={() => {
+                selText.enabled = selText.enabled === false;
+                studio.inv();
+                studio.snap();
+              }}
+            >
+              <Icon name={selText.enabled === false ? 'eye' : 'eye-off'} size={12} />
+              <span>{selText.enabled === false ? 'Show Layer' : 'Hide Layer'}</span>
+            </button>
+            <button
+              type="button"
+              class="xs danger"
+              onclick={() => studio.deleteSelectedBlock()}
+            >
+              <Icon name="trash" size={12} />
+              <span>Delete</span>
+            </button>
+          </div>
           <TextStyleFields item={selText} />
         </CategoryBlock>
       {/if}
@@ -198,26 +194,38 @@
               Delete
             </button>
           </div>
+          <button
+            type="button"
+            class="xs"
+            style="width:100%;margin-top:8px"
+            onclick={() => {
+              studio.leftTab = 'subtitles';
+              studio.subTab = 'style';
+            }}
+          >
+            Customize Subtitle Appearance →
+          </button>
         </CategoryBlock>
       {/if}
 
       {#if !selOverlay && !selText && !selSub}
-        <div class="sub-card" style="margin-top:0">
-          <div style="font-weight:600;font-size:12px;margin-bottom:3px">No Layer Selected</div>
-          <div class="hint" style="margin:0">
-            Click any subtitle cue, floating text, or overlay video in the preview/timeline to inspect and edit it here.
+        <CategoryBlock title="Active Clip Summary" icon="film" open={true}>
+          <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+            <span class="hint" style="margin:0">Aspect Ratio</span>
+            <span class="badge mono">{studio.aspect}</span>
           </div>
-        </div>
-      {/if}
+          <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+            <span class="hint" style="margin:0">Trim Range</span>
+            <span class="badge mono">{fmt(studio.trimS)} → {fmt(studio.trimE)}</span>
+          </div>
+          <StyleFieldRow label="Video Volume" value={studio.au?.vid ?? 100} min={0} max={200} unit="%" onchange={(v) => ((studio.au.vid = v), studio.syncVidVol?.())} />
+          <div class="hint" style="margin:8px 0 0">
+            Select any subtitle cue, title overlay, or media layer in the preview or timeline to edit its properties here.
+          </div>
+        </CategoryBlock>
 
-      {#if studio.leftTab === 'subtitles'}
-        <StyleWorkflow />
-      {:else if studio.leftTab === 'banners'}
-        <StyleWorkflow />
-      {:else}
-        <ExportPanel modeTab="exp" />
+        <StudioPresetsPanel />
       {/if}
-    {/if}
   </div>
 </aside>
 

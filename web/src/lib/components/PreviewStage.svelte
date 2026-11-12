@@ -25,6 +25,26 @@
   const showSubBbox = $derived(
     !!(subFrame && !studio.exporting && (studio.subBoxSelected || studio.hoverLayer === 'sub' || pd?.subResize || pd?.sub))
   );
+  const selectedCanvasMeta = $derived.by(() => {
+    if (studio.selectedOverlayId) {
+      const ov = (studio.mediaOverlays || []).find((o) => o.id === studio.selectedOverlayId);
+      if (ov) return { label: `Overlay: ${ov.name}`, visible: ov.enabled !== false, canDelete: true };
+    }
+    if (studio.selectedCanvasKind === 'spk') {
+      return { label: 'Speaker Banner', visible: !!studio.spk.on, canDelete: true };
+    }
+    if (studio.selectedCanvasKind === 'bn') {
+      return { label: 'News Banner', visible: !!studio.bn.on, canDelete: true };
+    }
+    if (studio.sel) {
+      const tx = studio.texts.find((x) => x.id === studio.sel);
+      if (tx) return { label: `Text: ${(tx.t || '').slice(0, 18) || 'Layer'}`, visible: tx.enabled !== false, canDelete: true };
+    }
+    if (studio.subBoxSelected) {
+      return { label: 'Subtitles', visible: studio.st.on !== 0 && studio.st.on !== false, canDelete: false };
+    }
+    return null;
+  });
   const subHandles = [
     { dir: 'nw', cls: 'c nw' },
     { dir: 'n', cls: 'e n' },
@@ -173,8 +193,8 @@
     const [x, y] = cp(e);
     const fb = studio.frBox;
     const box = studio.fr.on && fb ? fb : { x: 0, y: 0, w: studio.LW, h: studio.LH };
-    const txtObj = [...studio.texts].reverse().find((o) => hit(o.box, x, y));
-    const ovObj = [...(studio.mediaOverlays || [])].reverse().find((o) => hit(o._box, x, y));
+    const txtObj = [...studio.texts].reverse().find((o) => o.enabled !== false && hit(o.box, x, y));
+    const ovObj = [...(studio.mediaOverlays || [])].reverse().find((o) => o.enabled !== false && hit(o._box, x, y));
     const wantSpk = studio.spk.on && studio.spkBox && hit(studio.spkBox, x, y);
     const wantBn = studio.bn.on && studio.bnBox && hit(studio.bnBox, x, y);
 
@@ -227,28 +247,40 @@
 
     if (fb && Math.hypot(x - (fb.x + fb.w), y - (fb.y + fb.h)) < 48) pd = { rs: 1, x0: x, w0: studio.fr.w };
     else if (wantBn) {
+      studio.selectedOverlayId = null;
+      studio.sel = null;
+      studio.selectedCanvasKind = 'bn';
       pd = { bn: 1, x0: x, y0: y, bx: studio.bn.x ?? 50, by: studio.bn.y ?? 88 };
     } else if (wantSpk) {
+      studio.selectedOverlayId = null;
+      studio.sel = null;
+      studio.selectedCanvasKind = 'spk';
       studio.spk.pos = 'custom';
       pd = { spk: 1, x0: x, y0: y, sx: studio.spk.x ?? 50, sy: studio.spk.y ?? 66 };
     } else if (ovObj) {
+      studio.selectedCanvasKind = null;
+      studio.sel = null;
       studio.selectedOverlayId = ovObj.id;
       pd = { ov: ovObj, x0: x, y0: y, ox: ovObj.x ?? 50, oy: ovObj.y ?? 50 };
     } else if (txtObj) {
+      studio.selectedCanvasKind = null;
+      studio.selectedOverlayId = null;
       studio.sel = txtObj.id;
       pd = { o: txtObj };
     } else if (hit(studio.subBox, x, y) || hit(studio.subMaxBox, x, y)) {
+      studio.selectedCanvasKind = 'sub';
+      studio.selectedOverlayId = null;
       studio.subBoxSelected = true;
       pd = { sub: 1, x0: x, y0: y, sx: studio.st.x ?? 50, sy: studio.st.y ?? 80, cx0: e.clientX, cy0: e.clientY };
     } else if (inBox(box, x, y)) {
-      studio.subBoxSelected = false;
+      studio.clearSelection();
       if (studio.hoverLayer === 'sub') studio.hoverLayer = null;
       pd =
         studio.fr.on && (studio.dm === 'frame' || e.shiftKey)
           ? { fr: 1, x0: x, y0: y, fx: studio.fr.x, fy: studio.fr.y, cx0: e.clientX, cy0: e.clientY }
           : { pan: 1, x0: x, y0: y, px: studio.fx.px, py: studio.fx.py, bw: box.w, bh: box.h, cx0: e.clientX, cy0: e.clientY };
     } else {
-      studio.subBoxSelected = false;
+      studio.clearSelection();
       if (studio.hoverLayer === 'sub') studio.hoverLayer = null;
       pd = { tapOnly: 1, cx0: e.clientX, cy0: e.clientY };
     }
@@ -690,24 +722,32 @@
       </div>
     </div>
 
-    {#if !hasMediaOrSample}
-      <div class="empty-stage-card">
-        <div class="es-icon"><Icon name="media" size={22} /></div>
-        <h3>No Video Loaded</h3>
-        <p class="hint" style="margin:4px 0 14px">
-          {viewport.isMobile ? 'Tap Open Video to pick from your phone library or preview a look.' : 'Drop a video file directly onto the canvas, import media, or preview a sample template layout.'}
-        </p>
-        <div class="bar" style="justify-content:center;margin:0">
-          <button type="button" class="sm pri" onclick={quickPickVideo}>
-            <Icon name="upload" size={13} /> Open Video
+    {#if selectedCanvasMeta}
+      <div class="canvas-sel-bar" role="toolbar" aria-label="Selected canvas element actions">
+        <span class="sel-name">{selectedCanvasMeta.label}</span>
+        <button
+          type="button"
+          class="xs"
+          onclick={() => studio.toggleSelectedVisibility()}
+          title={selectedCanvasMeta.visible ? 'Hide element' : 'Show element'}
+        >
+          <Icon name={selectedCanvasMeta.visible ? 'eye-off' : 'eye'} size={12} />
+          <span>{selectedCanvasMeta.visible ? 'Hide' : 'Show'}</span>
+        </button>
+        {#if selectedCanvasMeta.canDelete}
+          <button
+            type="button"
+            class="xs danger"
+            onclick={() => studio.deleteSelectedBlock()}
+            title="Delete selected element (Undo restores)"
+          >
+            <Icon name="trash" size={12} />
+            <span>Delete</span>
           </button>
-          <button type="button" class="sm" onclick={() => onSelectWorkflow('media')}>
-            <Icon name="layers" size={13} /> Media &amp; Audio
-          </button>
-          <button type="button" class="sm ghost" onclick={() => launchTemplatePreview(BUILT_IN_STUDIO_PRESETS[0])}>
-            Preview Look
-          </button>
-        </div>
+        {/if}
+        <button type="button" class="xs ghost" onclick={() => studio.clearSelection()} title="Deselect">
+          <Icon name="x" size={12} />
+        </button>
       </div>
     {/if}
 
@@ -972,32 +1012,6 @@
     background: var(--accent-soft);
     color: var(--accent);
   }
-  .empty-stage-card {
-    position: absolute;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-mid);
-    border-radius: var(--radius-xl);
-    padding: 24px 26px;
-    text-align: center;
-    max-width: 390px;
-    box-shadow: var(--shadow-lg);
-    z-index: 5;
-  }
-  .empty-stage-card h3 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 650;
-  }
-  .es-icon {
-    width: 42px;
-    height: 42px;
-    border-radius: var(--radius-lg);
-    background: var(--accent-soft);
-    color: var(--accent);
-    display: inline-grid;
-    place-items: center;
-    margin-bottom: 10px;
-  }
   .transport-bar {
     height: 44px;
     display: grid;
@@ -1045,6 +1059,32 @@
     font-size: 11.2px;
     border-radius: var(--radius-sm);
     background: var(--bg-elevated);
+  }
+  .canvas-sel-bar {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: 10px;
+    background: rgba(17, 20, 27, 0.92);
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+  }
+  .sel-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 0 4px;
+    max-width: 150px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   @media (max-width: 980px) {
     .tr-left {

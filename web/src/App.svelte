@@ -13,6 +13,7 @@
   import ToolRail from './lib/components/ToolRail.svelte';
 
   import ConfirmModal from './lib/components/modals/ConfirmModal.svelte';
+  import ExportModal from './lib/components/modals/ExportModal.svelte';
   import ProjectsDrawerModal from './lib/components/modals/ProjectsDrawerModal.svelte';
   import SettingsModal from './lib/components/modals/SettingsModal.svelte';
 
@@ -20,9 +21,10 @@
   import ProjectHome from './lib/components/views/ProjectHome.svelte';
   import TranslateView from './lib/components/views/TranslateView.svelte';
 
+  import AiToolsWorkflow from './lib/components/workflows/AiToolsWorkflow.svelte';
+  import AudioWorkflow from './lib/components/workflows/AudioWorkflow.svelte';
   import BannersWorkflow from './lib/components/workflows/BannersWorkflow.svelte';
   import CaptionsWorkflow from './lib/components/workflows/CaptionsWorkflow.svelte';
-  import ExportWorkflow from './lib/components/workflows/ExportWorkflow.svelte';
   import LookWorkflow from './lib/components/workflows/LookWorkflow.svelte';
   import MediaWorkflow from './lib/components/workflows/MediaWorkflow.svelte';
 
@@ -48,19 +50,20 @@
   });
 
   const leftTitles = {
-    media: '1. Media & Overlays',
-    subtitles: '2. Subtitles & AI',
-    banners: '3. Text & Banners',
-    look: '4. Style & Look',
-    export: '5. Export & Audio',
+    media: 'Media & Overlays',
+    subtitles: 'Subtitles',
+    banners: 'Titles & Banners',
+    look: 'Canvas & Color',
+    audio: 'Audio & Mix',
+    ai: 'AI Tools',
   };
 
   const mobileNavItems = [
     { id: 'media', label: 'Media', icon: 'media' },
-    { id: 'subtitles', label: 'Captions', icon: 'subtitles' },
-    { id: 'banners', label: 'Text', icon: 'type' },
-    { id: 'look', label: 'Look', icon: 'palette' },
-    { id: 'export', label: 'Export', icon: 'upload' },
+    { id: 'subtitles', label: 'Subtitles', icon: 'subtitles' },
+    { id: 'banners', label: 'Titles', icon: 'type' },
+    { id: 'look', label: 'Canvas', icon: 'palette' },
+    { id: 'ai', label: 'AI', icon: 'sparkles' },
   ];
 
   onMount(() => {
@@ -242,8 +245,10 @@
             <BannersWorkflow />
           {:else if studio.leftTab === 'look'}
             <LookWorkflow />
-          {:else if studio.leftTab === 'export'}
-            <ExportWorkflow />
+          {:else if studio.leftTab === 'audio'}
+            <AudioWorkflow />
+          {:else if studio.leftTab === 'ai'}
+            <AiToolsWorkflow />
           {:else}
             <MediaWorkflow />
           {/if}
@@ -344,8 +349,10 @@
               <BannersWorkflow />
             {:else if studio.leftTab === 'look'}
               <LookWorkflow />
-            {:else if studio.leftTab === 'export'}
-              <ExportWorkflow />
+            {:else if studio.leftTab === 'audio'}
+              <AudioWorkflow />
+            {:else if studio.leftTab === 'ai'}
+              <AiToolsWorkflow />
             {:else}
               <MediaWorkflow />
             {/if}
@@ -377,8 +384,10 @@
                 <BannersWorkflow />
               {:else if studio.leftTab === 'look'}
                 <LookWorkflow />
-              {:else if studio.leftTab === 'export'}
-                <ExportWorkflow />
+              {:else if studio.leftTab === 'audio'}
+                <AudioWorkflow />
+              {:else if studio.leftTab === 'ai'}
+                <AiToolsWorkflow />
               {:else}
                 <MediaWorkflow />
               {/if}
@@ -419,6 +428,7 @@
 <ProjectHome onOpenSettings={() => (settingsOpen = true)} />
 <ProjectsDrawerModal bind:open={projectsOpen} />
 <SettingsModal bind:open={settingsOpen} />
+<ExportModal />
 <ConfirmModal />
 <ColorPickerPopover />
 

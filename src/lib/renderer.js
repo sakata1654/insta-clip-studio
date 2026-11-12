@@ -969,6 +969,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
   // Media overlays (videos, banners, logos, PiP, split-screen)
   for (const o of S.mediaOverlays || []) {
     o._box = null;
+    if (o.enabled === false) continue;
     const rec = S.mediaNodes.get(o.id);
     const el = rec?.el;
     if (!el) continue;
@@ -1559,7 +1560,7 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
       : null;
   const a = foundSub || sampleObj;
 
-  if (a && !S.sample) {
+  if (a && !S.sample && S.st.on !== 0 && S.st.on !== false) {
     const st = { ...S.st, ...a.st };
     const [part, cs] = partFor(a, t);
     const col = a.st && a.st.color !== undefined ? a.st.color : st.acc ? th.accent : st.color;
@@ -1682,6 +1683,8 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
   }
 
   for (const o of S.texts) {
+    o.box = null;
+    if (o.enabled === false) continue;
     if (t >= o.s && t < o.e) {
       const stObj = {
         ...S.st,
@@ -1789,6 +1792,17 @@ export function renderCanvasFrame(C, sc, dragPreview = null, S = studio, blurC =
     } else if (S.hoverLayer === 'text') {
       const tx = S.texts.find((q) => q.id === S.sel);
       if (tx?.box) drawHudBox(tx.box, 'Text Overlay · Drag', '#a855f7');
+    }
+    if (S.selectedOverlayId) {
+      const ov = (S.mediaOverlays || []).find((q) => q.id === S.selectedOverlayId);
+      if (ov?._box) drawHudBox(ov._box, `${ov.name} · Selected`, '#06b6d4');
+    } else if (S.selectedCanvasKind === 'spk' && S.spk.on && S.spkBox) {
+      drawHudBox(S.spkBox, 'Speaker Banner · Selected', '#22c55e');
+    } else if (S.selectedCanvasKind === 'bn' && S.bn.on && S.bnBox) {
+      drawHudBox(S.bnBox, 'News Banner · Selected', '#ef4444');
+    } else if (S.sel) {
+      const tx = S.texts.find((q) => q.id === S.sel);
+      if (tx?.box) drawHudBox(tx.box, 'Text Layer · Selected', '#a855f7');
     }
 
     const fb = S.frBox;

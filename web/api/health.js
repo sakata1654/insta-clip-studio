@@ -18,6 +18,7 @@ export default async function handler(req, res) {
       openai: !!process.env.OPENAI_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+      groq: !!process.env.GROQ_API_KEY,
     },
   });
 }

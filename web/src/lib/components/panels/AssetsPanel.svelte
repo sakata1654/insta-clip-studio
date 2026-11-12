@@ -282,17 +282,31 @@
       <div class="sub-card">
         <div class="rt" style="justify-content:space-between;margin-bottom:6px">
           <b>{selectedOv.name}</b>
-          <button
-            type="button"
-            class="xs"
-            onclick={() => {
-              studio.mediaOverlays = studio.mediaOverlays.filter((x) => x.id !== selectedOv.id);
-              studio.inv();
-              studio.snap();
-            }}
-          >
-            Remove
-          </button>
+          <div class="rt" style="gap:4px">
+            <button
+              type="button"
+              class="xs"
+              onclick={() => {
+                selectedOv.enabled = selectedOv.enabled === false;
+                studio.inv();
+                studio.snap();
+              }}
+              title={selectedOv.enabled === false ? 'Show overlay' : 'Hide overlay'}
+            >
+              {selectedOv.enabled === false ? 'Show' : 'Hide'}
+            </button>
+            <button
+              type="button"
+              class="xs danger"
+              onclick={() => {
+                studio.mediaOverlays = studio.mediaOverlays.filter((x) => x.id !== selectedOv.id);
+                studio.inv();
+                studio.snap();
+              }}
+            >
+              Remove
+            </button>
+          </div>
         </div>
 
         <div class="bar" style="gap:4px">

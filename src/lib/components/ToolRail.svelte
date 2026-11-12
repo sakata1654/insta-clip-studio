@@ -4,16 +4,17 @@
   let { active = $bindable('media') } = $props();
 
   const rails = [
-    { id: 'media', label: '1. Media', icon: 'media', tip: 'Import video, download URL, overlay assets & AI clips' },
-    { id: 'subtitles', label: '2. Subtitles', icon: 'subtitles', tip: 'Generate, edit, AI-arrange & translate subtitles' },
-    { id: 'banners', label: '3. Text & Banners', icon: 'type', tip: 'Floating text, Speaker banner, News ticker & Watermark' },
-    { id: 'look', label: '4. Style & Look', icon: 'palette', tip: 'Format, card frame, subtitle fonts, color, glow & presets' },
-    { id: 'export', label: '5. Export', icon: 'upload', tip: 'Trim range, audio mastering, MP4 render & caption' },
+    { id: 'media', label: 'Media', icon: 'media', tip: 'Import video, download URL, project assets & overlays' },
+    { id: 'subtitles', label: 'Subtitles', icon: 'subtitles', tip: 'Generate, edit, style & translate subtitles' },
+    { id: 'banners', label: 'Titles', icon: 'type', tip: 'Floating text, speaker badge, watermark & news ticker' },
+    { id: 'look', label: 'Canvas', icon: 'layout', tip: 'Aspect ratio, studio framing, color grade & camera cuts' },
+    { id: 'audio', label: 'Audio', icon: 'music', tip: 'Audio mastering, vocal separation & background music mix' },
+    { id: 'ai', label: 'AI Tools', icon: 'sparkles', tip: 'AI Lecture-to-Reels, smart segmentation & editorial coach' },
   ];
 </script>
 
-<nav class="tool-rail" aria-label="Editing steps">
-  <div class="rail-caption">WORKFLOW</div>
+<nav class="tool-rail" aria-label="Workspace sections">
+  <div class="rail-caption">TOOLS</div>
   {#each rails as r}
     <button
       type="button"

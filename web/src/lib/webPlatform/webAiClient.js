@@ -15,7 +15,7 @@ export async function fetchServerHealth(force = false) {
       runtime: 'offline-static',
       allowByok: true,
       maxUploadBytes: 4_200_000,
-      providers: { gemini: false, openai: false, anthropic: false, elevenlabs: false },
+      providers: { gemini: false, openai: false, anthropic: false, elevenlabs: false, groq: false },
     };
   }
 }
@@ -69,18 +69,72 @@ export async function webAiCallJson({ prov = 'gemini', url = '', key = '', model
   }
 }
 
+function normWordToken(w) {
+  return String(w || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function appendChunkWithOverlapDedup(allSegments, allWords, chunkRes, offset, overlapSec) {
+  const prevWordEnd = allWords.length ? allWords[allWords.length - 1].e : -1;
+  const prevSegEnd = allSegments.length ? allSegments[allSegments.length - 1].e : -1;
+  const rawWords = Array.isArray(chunkRes.words) && chunkRes.words.length
+    ? chunkRes.words.map((w) => ({
+        w: String(w.word ?? w.w ?? w.text ?? '').trim(),
+        s: Number(w.start ?? w.s ?? 0) + offset,
+        e: Math.max(Number(w.start ?? w.s ?? 0) + offset + 0.04, Number(w.end ?? w.e ?? 0) + offset),
+      })).filter((w) => w.w)
+    : [];
+
+  const dedupedWords = [];
+  for (const w of rawWords) {
+    if (overlapSec > 0 && prevWordEnd > 0 && w.s < prevWordEnd + 0.35) {
+      const recentTail = allWords.slice(-8);
+      const dup = recentTail.some(
+        (pw) => Math.abs(pw.s - w.s) < 1.2 && normWordToken(pw.w) && normWordToken(pw.w) === normWordToken(w.w)
+      );
+      if (dup || w.e <= prevWordEnd - 0.1) continue;
+    }
+    dedupedWords.push(w);
+    allWords.push(w);
+  }
+
+  for (const seg of chunkRes.segments || []) {
+    const s = Number(seg.s || 0) + offset;
+    const e = Math.max(s + 0.05, Number(seg.e || 0) + offset);
+    if (overlapSec > 0 && prevSegEnd > 0 && e <= prevSegEnd - 0.15) continue;
+    const segWords = Array.isArray(seg.w)
+      ? seg.w
+          .map((word) => ({
+            w: String(word.w ?? word.word ?? '').trim(),
+            s: Number(word.s ?? word.start ?? 0) + offset,
+            e: Math.max(Number(word.s ?? word.start ?? 0) + offset + 0.04, Number(word.e ?? word.end ?? 0) + offset),
+          }))
+          .filter((word) => word.w && (overlapSec <= 0 || prevWordEnd <= 0 || word.e > prevWordEnd - 0.1))
+      : undefined;
+    const text = segWords && segWords.length ? segWords.map((x) => x.w).join(' ').trim() : String(seg.t || '').trim();
+    if (!text) continue;
+    allSegments.push({
+      s: prevSegEnd > 0 && s < prevSegEnd ? Math.max(s, prevSegEnd) : s,
+      e,
+      t: text,
+      w: segWords && segWords.length ? segWords : undefined,
+    });
+  }
+}
+
 /**
  * Transcribes local Video/Audio entirely without uploading raw video:
- * 1) Extracts 16 kHz mono WAV chunks locally via Web Audio API (< 3.5 MB/chunk).
- * 2) Sends each lightweight audio chunk to /api/transcribe (ElevenLabs Scribe v2 or OpenAI Whisper).
- * 3) Merges timestamps seamlessly across all chunks.
+ * 1) Extracts 16 kHz mono WAV chunks locally via Web Audio API (< 3.5 MB/chunk) with 4s overlap.
+ * 2) Sends each lightweight audio chunk to /api/transcribe (Groq Whisper Large V3, ElevenLabs Scribe v2, or OpenAI Whisper).
+ * 3) Retries failed chunks individually and merges/deduplicates timestamps chronologically.
  */
 export async function transcribeMediaWeb({
   file,
-  engine = 'elevenlabs',
+  engine = 'groq',
   lang = 'auto',
-  model = 'scribe_v2',
-  maxWords = 8,
+  model = 'whisper-large-v3',
+  maxWords = 12,
   diarize = false,
   tagAudioEvents = false,
   prompt = '',
@@ -92,7 +146,9 @@ export async function transcribeMediaWeb({
   if (!chunks.length) throw new Error('Could not extract audio samples from this file.');
 
   const allSegments = [];
+  const allWords = [];
   const allTexts = [];
+  const failedChunks = [];
   const headers = { 'content-type': 'application/json' };
   if (String(userKey || '').trim()) headers['x-user-api-key'] = String(userKey).trim();
 
@@ -105,39 +161,56 @@ export async function transcribeMediaWeb({
         `Cloud ASR chunk ${i + 1}/${chunks.length} (${Math.round(ch.durationSec)}s extracted audio)…`
       );
     }
-    const r = await fetch('/api/transcribe', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        engine,
-        lang,
-        model,
-        maxWords,
-        diarize,
-        tagAudioEvents,
-        prompt,
-        mimeType: 'audio/wav',
-        audioBase64: uint8ToBase64(ch.wavBytes),
-      }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      throw new Error(j?.error || `Transcription HTTP ${r.status}`);
+
+    let chunkJson = null;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0 && onProgress) {
+          onProgress(basePct, `Retrying chunk ${i + 1}/${chunks.length} (attempt ${attempt + 1}/3)…`);
+        }
+        const r = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            engine,
+            lang,
+            model,
+            maxWords,
+            diarize,
+            tagAudioEvents,
+            prompt,
+            mimeType: 'audio/wav',
+            audioBase64: uint8ToBase64(ch.wavBytes),
+          }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) {
+          chunkJson = j;
+          break;
+        }
+        lastErr = new Error(j?.error || `Transcription HTTP ${r.status}`);
+        if (![429, 502, 503, 504].includes(r.status)) break;
+      } catch (e) {
+        lastErr = e;
+      }
+      await new Promise((res) => setTimeout(res, 1200 * 2 ** attempt));
     }
-    const offset = ch.startOffsetSec;
-    for (const seg of j.segments || []) {
-      allSegments.push({
-        s: Number(seg.s || 0) + offset,
-        e: Number(seg.e || 0) + offset,
-        t: String(seg.t || '').trim(),
-        w: Array.isArray(seg.w)
-          ? seg.w.map((word) => ({ w: word.w, s: Number(word.s || 0) + offset, e: Number(word.e || 0) + offset }))
-          : undefined,
-      });
+
+    if (!chunkJson) {
+      failedChunks.push({ index: i + 1, error: lastErr?.message || String(lastErr) });
+      continue;
     }
-    if (j.text) allTexts.push(j.text.trim());
+
+    appendChunkWithOverlapDedup(allSegments, allWords, chunkJson, ch.startOffsetSec, ch.overlapSec || 0);
+    if (chunkJson.text) allTexts.push(chunkJson.text.trim());
   }
 
-  if (onProgress) onProgress(100, `Transcribed ${allSegments.length} segments (${Math.round(duration)}s).`);
-  return { segments: allSegments, text: allTexts.join(' '), duration };
+  if (!allSegments.length && failedChunks.length) {
+    throw new Error(failedChunks[0].error || 'All transcription chunks failed.');
+  }
+
+  const warnSuffix = failedChunks.length ? ` (${failedChunks.length} chunk(s) skipped)` : '';
+  if (onProgress) onProgress(100, `Transcribed ${allSegments.length} segments (${Math.round(duration)}s)${warnSuffix}.`);
+  return { segments: allSegments, words: allWords, text: allTexts.join(' '), duration, failedChunks };
 }

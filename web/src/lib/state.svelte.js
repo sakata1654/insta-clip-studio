@@ -104,9 +104,14 @@ class StudioStore {
     typeof localStorage !== 'undefined' && localStorage.icsUiTheme === 'light' ? 'light' : 'dark'
   );
   leftTab = $state('media');
+  subTab = $state('gen'); // 'gen' | 'edit' | 'style' | 'tr'
   inspectorTab = $state('auto'); // 'auto' | 'subtitles' | 'canvas' | 'overlays' | 'export'
   previewZoom = $state(1);
   homeOpen = $state(true);
+  exportModalOpen = $state(false);
+  onboardingDismissed = $state(
+    typeof localStorage !== 'undefined' && localStorage.icsOnboarded === '1'
+  );
 
   // Toast, Confirm & UI Overlays
   toastMsg = $state('');
@@ -144,6 +149,7 @@ class StudioStore {
   loopRange = $state(false);
   snapGrid = $state(true);
   selectedOverlayId = $state(null);
+  selectedCanvasKind = $state(null); // 'spk' | 'bn' | 'sub' | null
   hov = $state(0);
   hoverLayer = $state(null);
   subBoxSelected = $state(false);
@@ -740,10 +746,72 @@ class StudioStore {
     return right;
   }
 
+  clearSelection() {
+    this.selectedOverlayId = null;
+    this.sel = null;
+    this.subBoxSelected = false;
+    this.selectedCanvasKind = null;
+    this.inv();
+  }
+
+  toggleSelectedVisibility() {
+    if (this.selectedOverlayId) {
+      const ov = this.mediaOverlays.find((o) => o.id === this.selectedOverlayId);
+      if (ov) {
+        ov.enabled = ov.enabled === false;
+        this.inv();
+        this.snap();
+        return true;
+      }
+    }
+    if (this.sel) {
+      const tx = this.texts.find((x) => x.id === this.sel);
+      if (tx) {
+        tx.enabled = tx.enabled === false;
+        this.inv();
+        this.snap();
+        return true;
+      }
+    }
+    if (this.selectedCanvasKind === 'spk') {
+      this.spk.on = this.spk.on ? 0 : 1;
+      this.inv();
+      this.snap();
+      return true;
+    }
+    if (this.selectedCanvasKind === 'bn') {
+      this.bn.on = this.bn.on ? 0 : 1;
+      this.inv();
+      this.snap();
+      return true;
+    }
+    if (this.subBoxSelected || this.selectedCanvasKind === 'sub') {
+      this.st.on = this.st.on === 0 ? 1 : 0;
+      this.inv();
+      this.snap();
+      return true;
+    }
+    return false;
+  }
+
   deleteSelectedBlock() {
     if (this.selectedOverlayId) {
       this.mediaOverlays = this.mediaOverlays.filter((o) => o.id !== this.selectedOverlayId);
       this.selectedOverlayId = null;
+      this.inv();
+      this.snap();
+      return true;
+    }
+    if (this.selectedCanvasKind === 'spk') {
+      this.spk.on = 0;
+      this.selectedCanvasKind = null;
+      this.inv();
+      this.snap();
+      return true;
+    }
+    if (this.selectedCanvasKind === 'bn') {
+      this.bn.on = 0;
+      this.selectedCanvasKind = null;
       this.inv();
       this.snap();
       return true;

@@ -1,4 +1,5 @@
 <script>
+  import { getCachedAsr, makeAsrCacheKey, setCachedAsr } from '../../asrCache.js';
   import { transcriptionDuration, transcriptionPath } from '../../mediaHelpers.js';
   import {
     aiCallJson,
@@ -14,13 +15,17 @@
   import { fvtt, fts, studio } from '../../state.svelte.js';
   import { getTauri } from '../../tauriBridge.js';
   import CategoryBlock from '../CategoryBlock.svelte';
+  import Icon from '../Icon.svelte';
+  import StyleWorkflow from './StyleWorkflow.svelte';
 
-  let subTab = $state('gen'); // 'gen' | 'edit' | 'tr'
+  let showAdvAsr = $state(false);
 
   // Transcription state
-  let eng = $state(typeof localStorage !== 'undefined' ? localStorage.icsAsrEngine || 'auto' : 'auto');
+  let eng = $state(typeof localStorage !== 'undefined' ? localStorage.icsAsrEngine || 'groq' : 'groq');
   let elModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsElModel') || 'scribe_v2' : 'scribe_v2');
+  let groqModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsGroqAsrModel') || 'whisper-large-v3' : 'whisper-large-v3');
   let elKey = $state(studio.ovrGet().elevenlabs_key || '');
+  let groqKey = $state(studio.ovrGet().groq_key || '');
   let elDiarize = $state(false);
   let elTags = $state(false);
   let elStatus = $state('');
@@ -67,6 +72,11 @@
       } else if (p.startsWith('phase=uploading-elevenlabs')) {
         pct = 65;
         status = `Transcribing with ElevenLabs (${p.split(':')[1] || elModel})…`;
+      } else if (p.startsWith('phase=uploading-groq:')) {
+        const part = p.split(':')[1] || '1/1';
+        const [ci, ct] = part.split('/').map(Number);
+        pct = ct ? 25 + Math.round(((ci - 0.5) / ct) * 70) : 65;
+        status = `Transcribing with Groq Whisper Large V3 (chunk ${part})…`;
       } else if (m) {
         pct = +m[1];
         status = `Transcribing… ${m[1]}%`;
@@ -82,12 +92,13 @@
     } catch {}
   }
 
-  async function saveElKey() {
+  async function saveAsrKeys() {
     const o = studio.ovrGet();
     o.elevenlabs_key = elKey.trim();
+    o.groq_key = groqKey.trim();
     localStorage.icsOvr = JSON.stringify(o);
     await getTauri().core.invoke('set_overrides', { map: o });
-    elStatus = o.elevenlabs_key ? 'Saved ✔' : 'Cleared';
+    elStatus = (eng === 'groq' ? o.groq_key : o.elevenlabs_key) ? 'Saved ✔' : 'Cleared';
   }
 
   async function generateSubs() {
@@ -97,31 +108,53 @@
     pct = 0;
     try {
       const routed = eng === 'auto' ? 'faster' : eng;
-      const model = routed === 'elevenlabs' ? elModel : whisperModel;
-      const key = routed === 'elevenlabs' ? elKey.trim() || studio.ovrGet().elevenlabs_key || '' : '';
+      const model = routed === 'groq' ? groqModel : routed === 'elevenlabs' ? elModel : whisperModel;
+      const key =
+        routed === 'groq'
+          ? groqKey.trim() || studio.ovrGet().groq_key || ''
+          : routed === 'elevenlabs'
+            ? elKey.trim() || studio.ovrGet().elevenlabs_key || ''
+            : '';
+      if (routed === 'groq' && !key) throw new Error('Enter & save your Groq API key first.');
       if (routed === 'elevenlabs' && !key) throw new Error('Enter & save your ElevenLabs key first.');
 
       status = 'Preparing audio…';
       const input = await transcriptionPath();
       const durHint = await transcriptionDuration();
-      const resRaw = await T.core.invoke('transcribe', {
-        input,
-        lang,
-        maxlen: studio.subCfg.maxChars,
-        maxWords: studio.subCfg.maxWords,
-        translate: false,
-        model,
-        prompt: hints.trim(),
-        ctx: false,
-        det: false,
+      const cacheKey = makeAsrCacheKey({
+        name: studio.file?.name || input,
+        size: studio.file?.size || 0,
+        dur: studio.dur || studio.audioDuration || durHint || 0,
         engine: routed,
-        durationHint: durHint,
-        diarize: elDiarize,
-        tagAudioEvents: elTags,
-        elevenlabsKey: key || null,
+        model,
+        lang,
+        prompt: hints,
       });
 
-      const out = JSON.parse(resRaw);
+      let out = getCachedAsr(cacheKey);
+      let fromCache = !!out;
+      if (!out) {
+        const resRaw = await T.core.invoke('transcribe', {
+          input,
+          lang,
+          maxlen: studio.subCfg.maxChars,
+          maxWords: studio.subCfg.maxWords,
+          translate: false,
+          model,
+          prompt: hints.trim(),
+          ctx: false,
+          det: false,
+          engine: routed,
+          durationHint: durHint,
+          diarize: elDiarize,
+          tagAudioEvents: elTags,
+          elevenlabsKey: routed === 'elevenlabs' ? key || null : null,
+          groqKey: routed === 'groq' ? key || null : null,
+        });
+        out = JSON.parse(resRaw);
+        if (out?.segments?.length) setCachedAsr(cacheKey, out);
+      }
+
       const mc = studio.subCfg.maxChars || 84;
       const mw = studio.subCfg.maxWords || 12;
       const md = studio.subCfg.maxDur || 8;
@@ -137,10 +170,10 @@
       );
       studio.expandPipeSubtitles(false);
       pct = 100;
-      status = `${studio.subs.length} cues ready (target ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
+      status = `${studio.subs.length} cues ready${fromCache ? ' (cached)' : ''} (target ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
       studio.inv();
       studio.snap();
-      subTab = 'edit';
+      studio.subTab = 'edit';
     } catch (e) {
       status = 'Error: ' + (e?.message || e);
     } finally {
@@ -202,56 +235,68 @@
     studio.subs = studio.parseSRT(await f.text());
     studio.inv();
     studio.snap();
-    subTab = 'edit';
+    studio.subTab = 'edit';
     inp.value = '';
   }}
 />
 
 <div class="seg-pills tri">
-  <button type="button" class:on={subTab === 'gen'} onclick={() => (subTab = 'gen')}>1. Transcribe</button>
-  <button type="button" class:on={subTab === 'edit'} onclick={() => (subTab = 'edit')}>2. Cues ({studio.subs.length})</button>
-  <button type="button" class:on={subTab === 'tr'} onclick={() => (subTab = 'tr')}>3. Translate</button>
+  <button type="button" class:on={studio.subTab === 'gen'} onclick={() => (studio.subTab = 'gen')}>Generate</button>
+  <button type="button" class:on={studio.subTab === 'edit'} onclick={() => (studio.subTab = 'edit')}>Edit ({studio.subs.length})</button>
+  <button type="button" class:on={studio.subTab === 'style'} onclick={() => (studio.subTab = 'style')}>Style</button>
 </div>
 
-{#if subTab === 'gen'}
-  <CategoryBlock title="Model Picker" icon="subtitles" open={true}>
-    <div class="seg-pills">
-      <button type="button" class:on={eng !== 'elevenlabs'} onclick={() => setEngine('auto')}>🎙 Local Whisper / Cohere</button>
-      <button type="button" class:on={eng === 'elevenlabs'} onclick={() => setEngine('elevenlabs')}>☁ ElevenLabs Scribe 2</button>
-    </div>
-
-    {#if eng === 'elevenlabs'}
-      <div class="sub-card">
-        <select bind:value={elModel} style="width:100%;margin-bottom:6px">
-          <option value="scribe_v2">Scribe v2 (Best Accuracy + Keyterms)</option>
-          <option value="scribe_v1">Scribe v1</option>
+{#if studio.subTab === 'gen'}
+  <CategoryBlock title="Generate Subtitles" icon="subtitles" open={true}>
+    <div class="sg" style="margin-bottom:8px">
+      <label>
+        Provider
+        <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
+          <option value="groq">Groq</option>
+          <option value="elevenlabs">ElevenLabs</option>
+          <option value="faster">Local Whisper (faster-whisper)</option>
+          <option value="cohere">Cohere Transcribe</option>
+          <option value="cpp">whisper.cpp</option>
         </select>
-        <div class="rt">
-          <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
-          <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-        </div>
-        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-      </div>
-    {:else}
-      <div class="sg">
-        <label>
-          Engine
-          <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
-            <option value="auto">Auto (Best)</option>
-            <option value="faster">faster-whisper</option>
-            <option value="cohere">Cohere Transcribe</option>
-            <option value="cpp">whisper.cpp</option>
+      </label>
+      <label>
+        Model
+        {#if eng === 'groq'}
+          <select bind:value={groqModel} onchange={() => { try { localStorage.icsGroqAsrModel = groqModel; } catch {} }}>
+            <option value="whisper-large-v3">Whisper Large V3</option>
+            <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo</option>
           </select>
-        </label>
-        <label>
-          Model
+        {:else if eng === 'elevenlabs'}
+          <select bind:value={elModel} onchange={() => { try { localStorage.icsElModel = elModel; } catch {} }}>
+            <option value="scribe_v2">Scribe v2</option>
+            <option value="scribe_v1">Scribe v1</option>
+          </select>
+        {:else}
           <select bind:value={whisperModel}>
             <option value="auto">Auto (large-v3)</option>
             <option value="large-v3">large-v3</option>
             <option value="medium">medium</option>
             <option value="small">small</option>
           </select>
-        </label>
+        {/if}
+      </label>
+    </div>
+
+    {#if eng === 'groq' && !groqKey}
+      <div class="sub-card" style="margin-bottom:8px">
+        <div class="rt">
+          <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
+          <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+        </div>
+        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+      </div>
+    {:else if eng === 'elevenlabs' && !elKey}
+      <div class="sub-card" style="margin-bottom:8px">
+        <div class="rt">
+          <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
+          <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+        </div>
+        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
       </div>
     {/if}
 
@@ -267,7 +312,7 @@
         </select>
       </label>
       <label>
-        Style
+        Content Style
         <select bind:value={genre}>
           <option value="speech">Speech / Lecture</option>
           <option value="poetry">Poem / Qasida</option>
@@ -276,27 +321,53 @@
       </label>
     </div>
 
-    <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-top:8px" />
-  </CategoryBlock>
-
-  <CategoryBlock title="Natural Segmentation (Target: 8–12w · 500ms)" icon="sliders" open={true}>
-    <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
-      <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
-      <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
-      <label>Pad after ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
-    </div>
     <div class="bar" style="margin-top:10px;margin-bottom:2px">
       <button type="button" class="pri" style="flex:1" disabled={busy} onclick={generateSubs}>
         {busy ? 'Transcribing…' : 'Generate Subtitles'}
       </button>
-      <button type="button" class="sm" onclick={() => studio.rewrapAndPad()} title="Apply word limit and padding">
-        Re-wrap
-      </button>
     </div>
     <div class="pbar"><i style="width:{pct}%"></i></div>
     {#if status}<div class="hint" style="margin:2px 0 0">{status}</div>{/if}
+
+    <button type="button" class="adv-toggle" aria-expanded={showAdvAsr} onclick={() => (showAdvAsr = !showAdvAsr)}>
+      <span>Advanced Transcription &amp; Segmentation</span>
+      <Icon name={showAdvAsr ? 'chev-up' : 'chev-down'} size={13} />
+    </button>
+
+    {#if showAdvAsr}
+      <div class="adv-box">
+        {#if eng === 'groq'}
+          <div class="sub-card" style="margin-bottom:8px">
+            <div class="rt">
+              <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
+              <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+            </div>
+            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+          </div>
+        {:else if eng === 'elevenlabs'}
+          <div class="sub-card" style="margin-bottom:8px">
+            <div class="rt">
+              <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
+              <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+            </div>
+            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+          </div>
+        {/if}
+
+        <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-bottom:8px" />
+
+        <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
+          <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
+          <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
+          <label>Pad after ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
+        </div>
+        <button type="button" class="xs" style="width:100%;margin-top:6px" onclick={() => studio.rewrapAndPad()}>
+          Re-wrap Existing Subtitles
+        </button>
+      </div>
+    {/if}
   </CategoryBlock>
-{:else if subTab === 'edit'}
+{:else if studio.subTab === 'edit'}
   <div class="bar">
     <button type="button" class="xs" onclick={() => srtInput?.click()}>Import SRT</button>
     <button type="button" class="xs" onclick={() => saveBlob(new Blob([studio.subs.map((s, i) => `${i + 1}\n${fts(s.s)} --> ${fts(s.e)}\n${s.t}\n`).join('\n')], { type: 'text/plain' }), 'subtitles.srt')}>Export SRT</button>
@@ -322,7 +393,7 @@
         }
       }}
     >
-      AI Arrange
+      AI Smart Split
     </button>
     <button
       type="button"
@@ -408,10 +479,10 @@
       {/if}
     </div>
   {:else}
-    <div class="hint">No subtitles yet. Switch to <b>1. Transcribe</b> or click Import SRT.</div>
+    <div class="hint">No subtitles yet. Switch to <b>Generate</b> or click Import SRT.</div>
   {/each}
-{:else}
-  <CategoryBlock title="AI Translation & Dual Subtitles" icon="languages" open={true}>
+
+  <CategoryBlock title="Bilingual Translation" icon="languages" open={false}>
     <div class="sg">
       <label>To Language<input bind:value={studio.TR.tgt} /></label>
       <label>
@@ -448,9 +519,11 @@
     <div class="pbar"><i style="width:{trPct}%"></i></div>
     {#if trStatus}<div class="hint">{trStatus}</div>{/if}
     <button type="button" class="sm" style="width:100%;margin-top:6px" onclick={() => (studio.nav = 'tr')}>
-      Open Fullscreen Bilingual Translator →
+      Open Translation Desk →
     </button>
   </CategoryBlock>
+{:else}
+  <StyleWorkflow />
 {/if}
 
 <style>

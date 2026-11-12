@@ -91,6 +91,46 @@ export default async function handler(req, res) {
       return res.status(200).json({ segments, text: j.text || '', language: j.language_code || lang });
     }
 
+    if (engine === 'groq') {
+      const groqKey = userKey || process.env.GROQ_API_KEY || '';
+      if (!groqKey) {
+        return res.status(401).json({
+          code: 'NO_API_KEY',
+          error: 'GROQ_API_KEY is not configured on Vercel and no user key was provided.',
+        });
+      }
+      const fd = new FormData();
+      fd.append('model', model || 'whisper-large-v3');
+      fd.append('response_format', 'verbose_json');
+      fd.append('timestamp_granularities[]', 'word');
+      fd.append('timestamp_granularities[]', 'segment');
+      fd.append('temperature', '0');
+      if (lang && lang !== 'auto') fd.append('language', lang);
+      if (body?.prompt) fd.append('prompt', String(body.prompt).slice(0, 400));
+      fd.append('file', new Blob([audioBuf], { type: mime }), 'audio.wav');
+
+      const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${groqKey}` },
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        return res.status(r.status).json({ error: j?.error?.message || `Groq Whisper HTTP ${r.status}` });
+      }
+      const segments = normalizeWordsToSegments(
+        j.words || [],
+        (j.segments || []).map((s) => s.text).join(' ') || j.text || '',
+        maxWords
+      );
+      return res.status(200).json({
+        segments,
+        words: j.words || [],
+        text: j.text || '',
+        language: j.language || lang,
+      });
+    }
+
     // OpenAI Whisper fallback
     const oaKey = userKey || process.env.OPENAI_API_KEY || '';
     if (!oaKey) {

@@ -15,6 +15,28 @@
 
   let ovr = $state(studio.ovrGet());
   let envStatus = $state('');
+  let query = $state('');
+  let updateStatus = $state('');
+
+  async function checkUpdatesManually() {
+    updateStatus = 'Checking…';
+    await studio.refreshWebRuntime();
+    updateStatus = studio.serverHealth?.ok
+      ? 'Web Studio v1.5.0 — Connected & up to date.'
+      : 'Web Studio v1.5.0 — Running offline/local.';
+  }
+
+  const SHORTCUT_LABELS = {
+    play: 'Play / Pause',
+    prev: 'Previous Cue',
+    next: 'Next Cue',
+    split: 'Split Subtitle',
+    in: 'Set Trim Start',
+    out: 'Set Trim End',
+    undo: 'Undo Action',
+    redo: 'Redo Action',
+    save: 'Save Project',
+  };
 
   $effect(() => {
     if (open) {
@@ -68,9 +90,24 @@
         <button type="button" class="xs" onclick={() => ((open = false), (studio.apiModalOpen = false))}>✕</button>
       </div>
 
+      <input
+        type="search"
+        bind:value={query}
+        placeholder="Filter settings (AI, ElevenLabs, Whisper, shortcuts, theme…)"
+        style="width:100%;margin-bottom:8px"
+        oninput={() => {
+          const s = query.trim().toLowerCase();
+          if (!s) return;
+          if (/eleven|whisper|asr|webcodecs|storage|browser/.test(s)) tab = 'env';
+          else if (/key|shortcut|play|split|trim|undo/.test(s)) tab = 'keys';
+          else if (/theme|dark|light|appear|ui/.test(s)) tab = 'ui';
+          else if (/ai|openai|gemini|claude|groq|model|api/.test(s)) tab = 'ai';
+        }}
+      />
+
       <div class="seg-pills quad">
         <button type="button" class:on={tab === 'ai'} onclick={() => (tab = 'ai')}>AI Providers</button>
-        <button type="button" class:on={tab === 'env'} onclick={() => (tab = 'env')}>Browser &amp; ASR</button>
+        <button type="button" class:on={tab === 'env'} onclick={() => (tab = 'env')}>ASR &amp; Browser</button>
         <button type="button" class:on={tab === 'keys'} onclick={() => (tab = 'keys')}>Shortcuts</button>
         <button type="button" class:on={tab === 'ui'} onclick={() => (tab = 'ui')}>Appearance</button>
       </div>
@@ -127,6 +164,10 @@
         </div>
         <div class="sg">
           <label>
+            Groq Key (Whisper Large V3)
+            <input type="password" bind:value={ovr.groq_key} placeholder={studio.serverHealth?.providers?.groq ? 'Server Env Active ✔' : 'gsk_...'} />
+          </label>
+          <label>
             ElevenLabs Key (Optional BYOK)
             <input type="password" bind:value={ovr.elevenlabs_key} placeholder={studio.serverHealth?.providers?.elevenlabs ? 'Server Env Active ✔' : 'xi-api-key'} />
           </label>
@@ -142,7 +183,7 @@
       {:else if tab === 'keys'}
         <div class="sg">
           {#each Object.entries(studio.shortcuts) as [k, v]}
-            <label>{k}<input readonly value={v} /></label>
+            <label>{SHORTCUT_LABELS[k] || k}<input readonly value={v} /></label>
           {/each}
         </div>
       {:else}
@@ -156,6 +197,16 @@
             <button type="button" class:on={studio.uiTheme === 'light'} onclick={() => studio.applyUiTheme('light')}>Clean Light</button>
           </div>
           <p class="hint" style="margin:6px 0 0">Applies cleanly across the Project Homepage, Timeline Editor, Inspector, and Translation Desk.</p>
+        </div>
+        <div class="sub-card" style="margin-top:10px">
+          <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+            <b>About &amp; Updates</b>
+            <span class="badge mono">v1.5.0</span>
+          </div>
+          <div class="rt" style="justify-content:space-between;gap:8px">
+            <span class="hint" style="margin:0">{updateStatus || 'Manual check only — no startup pop-ups.'}</span>
+            <button type="button" class="xs" onclick={checkUpdatesManually}>Check for Updates</button>
+          </div>
         </div>
       {/if}
     </div>

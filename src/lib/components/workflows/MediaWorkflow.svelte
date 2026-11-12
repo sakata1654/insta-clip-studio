@@ -196,11 +196,10 @@
   }}
 />
 
-<div class="seg-pills quad">
+<div class="seg-pills" style="grid-template-columns:repeat(3,minmax(0,1fr))">
   <button type="button" class:on={subTab === 'import'} onclick={() => (subTab = 'import')}>Import</button>
   <button type="button" class:on={subTab === 'dl'} onclick={() => (subTab = 'dl')}>Link</button>
   <button type="button" class:on={subTab === 'assets'} onclick={() => (subTab = 'assets')}>Assets</button>
-  <button type="button" class:on={subTab === 'ai'} onclick={() => (subTab = 'ai')}>AI Clips</button>
 </div>
 
 {#if subTab === 'import'}
@@ -239,123 +238,8 @@
       <div class="hint" style="margin:2px 0 0">{dlStatus}</div>
     {/if}
   </CategoryBlock>
-{:else if subTab === 'assets'}
-  <AssetsPanel />
 {:else}
-  <CategoryBlock title="AI Lecture-to-Reels & Editorial Memory" icon="sparkles" open={true}>
-    <div class="sub-card" style="margin-bottom:8px">
-      <div class="rt" style="justify-content:space-between;margin-bottom:4px">
-        <span style="font-weight:700;font-size:11px">Editorial Intelligence</span>
-        <span class="badge mono">v{trainer.profileVersion} · {trainer.reviewed} reviewed</span>
-      </div>
-      <div class="hint" style="margin-bottom:6px">
-        Target ~{trainer.preferredDurSec}s
-        {#if trainer.acceptanceRate !== null} · {trainer.acceptanceRate}% accepted{/if}
-        {#if trainer.pendingSignals > 0} · {trainer.pendingSignals} new signals{/if}
-      </div>
-      <div class="bar" style="gap:4px">
-        <button type="button" class="xs" style="flex:1" disabled={aiBusy} onclick={saveCurrentTrimAsExample} title="Save current timeline trim range as a positive training example">
-          + Save Current Trim
-        </button>
-        <button
-          type="button"
-          class="xs pri"
-          disabled={aiBusy || trainer.exampleCount === 0}
-          onclick={trainAiCoachNow}
-          title="Reflect accumulated feedback into updated editorial rules"
-        >
-          Reflect ({trainer.pendingSignals})
-        </button>
-      </div>
-    </div>
-
-    <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--t2);margin-bottom:6px">
-      Content Category
-      <select bind:value={aiCategory}>
-        {#each CONTENT_CATEGORIES as cat}
-          <option value={cat.id}>{cat.label}</option>
-        {/each}
-      </select>
-    </label>
-    <div class="sg">
-      <label>Max reels<input type="number" min="1" max="20" bind:value={aiCount} /></label>
-      <label>Max sec<input type="number" min="30" max="300" bind:value={aiMax} /></label>
-    </div>
-    <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--t2);margin-top:6px">
-      Topic / Hook Focus (optional)
-      <input type="text" placeholder="e.g. stories, strong emotional advice, debates…" bind:value={aiFocus} />
-    </label>
-    <div class="bar" style="margin-top:8px">
-      <button type="button" class="pri sm" style="flex:1" disabled={aiBusy} onclick={findViralClips}>
-        <Icon name="sparkles" size={13} />
-        {aiBusy ? 'Analyzing…' : 'Find Smart Clips'}
-      </button>
-      <button type="button" class="sm" onclick={() => (studio.nav = 'ai')} title="Open full AI Clips & Trainer Manager">Studio</button>
-      <button type="button" class="sm" onclick={() => (studio.apiModalOpen = true)}>API</button>
-    </div>
-    {#if aiStatus}
-      <div class="hint" style="margin-top:6px">{aiStatus}</div>
-    {/if}
-
-    {#each aiClips as c}
-      <div class="sub-card" style="margin-top:8px">
-        <div class="rt" style="justify-content:space-between;gap:6px">
-          <b style="flex:1">{c.title}</b>
-          <span class="badge pri mono">{Math.round(c.end_seconds - c.start_seconds)}s</span>
-          <span class="badge mono">{c.quality_score ?? 85}</span>
-        </div>
-        <div class="hint mono" style="margin:3px 0">
-          {fmt(+c.start_seconds)} – {fmt(+c.end_seconds)} · {c.hook_grade || 'Hook'} · {c.ending_grade || 'End'}
-        </div>
-        {#if c.opening_text}
-          <div class="hint" style="margin:2px 0;color:var(--t1)">“{c.opening_text.slice(0, 78)}{c.opening_text.length > 78 ? '…' : ''}”</div>
-        {/if}
-        {#if c.critic_note}
-          <div class="hint" style="margin:2px 0 6px">{c.critic_note}</div>
-        {/if}
-        <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
-          <button type="button" class="xs pri" style="flex:1" onclick={() => applyAiClip(c)}>
-            Apply Range
-          </button>
-          <button
-            type="button"
-            class="xs"
-            class:pri={c.feedback === 'approve'}
-            onclick={() => markClipFeedback(c, 'approve')}
-            title="Approve clip (teaches AI to find more like this)"
-          >
-            <Icon name="check" size={12} />
-          </button>
-          <button
-            type="button"
-            class="xs"
-            onclick={() => (rejectMenuId = rejectMenuId === c.id ? null : c.id)}
-            title="Reject clip (tell AI what went wrong)"
-          >
-            <Icon name="x" size={12} />
-          </button>
-        </div>
-        {#if approveMenuId === c.id}
-          <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
-            {#each APPROVE_TAGS.slice(0, 6) as tag}
-              <button type="button" class="xs" onclick={() => markClipFeedback(c, 'approve', tag.id)}>
-                +{tag.label}
-              </button>
-            {/each}
-          </div>
-        {/if}
-        {#if rejectMenuId === c.id}
-          <div class="bar" style="gap:4px;margin-top:6px;flex-wrap:wrap">
-            {#each REJECT_REASONS as rr}
-              <button type="button" class="xs" onclick={() => markClipFeedback(c, 'reject', rr.id)}>
-                {rr.label}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/each}
-  </CategoryBlock>
+  <AssetsPanel />
 {/if}
 
 <style>
