@@ -182,6 +182,9 @@ class StudioStore {
   );
   previewFullscreen = $state(false);
   timelineExpanded = $state(false);
+  timelineAutoScroll = $state(
+    typeof localStorage !== 'undefined' && localStorage.icsTlAutoScroll === '0' ? false : true
+  );
   mobileSheet = $state(null); // null | 'tools' | 'inspector'
   tabletToolsOpen = $state(true);
   tabletInspectorOpen = $state(false);

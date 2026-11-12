@@ -1,5 +1,5 @@
 <script>
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
   import { fmt, studio } from '../state.svelte.js';
   import Icon from './Icon.svelte';
 
@@ -11,6 +11,11 @@
   let editingId = $state(null);
   let editDraft = $state('');
   let editOrig = '';
+
+  let userPausedAutoScroll = $state(false);
+  let isProgrammaticScroll = false;
+  let lastUserScrollAction = 0;
+  let lastPlaying = false;
 
   const touchPts = new Map();
   let pinchState = null;
@@ -105,6 +110,86 @@
     return () => ro.disconnect();
   });
 
+  function markUserTimelineInteraction() {
+    lastUserScrollAction = performance.now();
+  }
+
+  function toggleAutoScroll() {
+    if (userPausedAutoScroll) {
+      userPausedAutoScroll = false;
+      centerPlayhead(true);
+    } else {
+      studio.timelineAutoScroll = !studio.timelineAutoScroll;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.icsTlAutoScroll = studio.timelineAutoScroll ? '1' : '0';
+      }
+      if (studio.timelineAutoScroll) {
+        userPausedAutoScroll = false;
+        centerPlayhead(true);
+      }
+    }
+  }
+
+  function centerPlayhead(smooth = true) {
+    if (!scrollEl) return;
+    const maxScroll = Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth);
+    if (maxScroll <= 0) return;
+    const half = scrollEl.clientWidth * 0.5;
+    const target = Math.max(0, Math.min(maxScroll, phPx - half));
+    if (smooth) {
+      scrollEl.scrollTo({ left: target, behavior: 'smooth' });
+    } else {
+      isProgrammaticScroll = true;
+      scrollEl.scrollLeft = target;
+      scrollLeft = target;
+    }
+  }
+
+  // Resume following playhead when a new playback session starts
+  $effect(() => {
+    if (studio.playing && !lastPlaying) {
+      userPausedAutoScroll = false;
+    }
+    lastPlaying = studio.playing;
+  });
+
+  onMount(() => {
+    let animId = null;
+
+    const autoScrollLoop = () => {
+      if (studio.playing && studio.timelineAutoScroll && !userPausedAutoScroll && scrollEl) {
+        const maxScroll = Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth);
+        if (maxScroll > 0) {
+          const half = scrollEl.clientWidth * 0.5;
+          const idealScroll = Math.max(0, Math.min(maxScroll, phPx - half));
+          const current = scrollEl.scrollLeft;
+          const diff = idealScroll - current;
+
+          if (Math.abs(diff) > 0.5) {
+            const isOffscreen = phPx < current || phPx > current + scrollEl.clientWidth;
+            let step;
+            if (isOffscreen && Math.abs(diff) > scrollEl.clientWidth * 0.75) {
+              step = diff;
+            } else {
+              // Smooth progressive centering easing (18% per frame @ 60fps)
+              step = Math.abs(diff) < 1 ? diff : diff * 0.18;
+            }
+
+            isProgrammaticScroll = true;
+            scrollEl.scrollLeft = current + step;
+            scrollLeft = scrollEl.scrollLeft;
+          }
+        }
+      }
+      animId = requestAnimationFrame(autoScrollLoop);
+    };
+
+    animId = requestAnimationFrame(autoScrollLoop);
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+    };
+  });
+
   async function setZoomAnchored(nextZoom, anchorClientX = null) {
     const z = Math.min(maxZoom, Math.max(1, +nextZoom.toFixed(2)));
     if (!scrollEl) {
@@ -191,17 +276,36 @@
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
       zoomByFactor(factor, e.clientX);
-    } else if (scrollEl && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-      e.preventDefault();
-      scrollEl.scrollLeft += e.deltaY;
-      scrollLeft = scrollEl.scrollLeft;
+    } else if (scrollEl && (Math.abs(e.deltaY) > 0 || Math.abs(e.deltaX) > 0)) {
+      markUserTimelineInteraction();
+      if (studio.playing && studio.timelineAutoScroll) {
+        userPausedAutoScroll = true;
+      }
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        scrollEl.scrollLeft += e.deltaY;
+        scrollLeft = scrollEl.scrollLeft;
+      }
     }
+  }
+
+  function onScrollTimeline() {
+    if (!scrollEl) return;
+    const isRecentUserGesture = performance.now() - lastUserScrollAction < 200;
+    if (!isProgrammaticScroll && isRecentUserGesture) {
+      if (studio.playing && studio.timelineAutoScroll) {
+        userPausedAutoScroll = true;
+      }
+    }
+    isProgrammaticScroll = false;
+    scrollLeft = scrollEl.scrollLeft;
   }
 
   function onPointerDown(e) {
     if (!d) return;
     if (e.target.closest('.merge-btn') || e.target.closest('.inline-sub-edit')) return;
 
+    markUserTimelineInteraction();
     touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touchPts.size === 2) {
       const pts = [...touchPts.values()];
@@ -218,6 +322,7 @@
     const blk = e.target.closest('.blk');
     if (!blk) {
       drag = { k: 'seek' };
+      userPausedAutoScroll = false;
       studio.seek(timeAtEvent(e));
       laneEl.setPointerCapture(e.pointerId);
       return;
@@ -228,6 +333,7 @@
     const tr = blk.dataset.tr;
     if (tr === 'au') {
       drag = { k: 'seek' };
+      userPausedAutoScroll = false;
       studio.seek(timeAtEvent(e));
       laneEl.setPointerCapture(e.pointerId);
       return;
@@ -235,6 +341,7 @@
     if (tr === 'vd') {
       if (m === 'm') {
         drag = { k: 'seek' };
+        userPausedAutoScroll = false;
         studio.seek(timeAtEvent(e));
       } else {
         drag = { k: 'vd', m };
@@ -308,6 +415,7 @@
     const blk = e.target.closest('.blk');
     if (!blk) return;
     const id = +blk.dataset.id;
+    userPausedAutoScroll = false;
     if (blk.dataset.tr === 'sb') {
       const sub = studio.subs.find((x) => x.id === id);
       if (!sub) return;
@@ -406,6 +514,27 @@
       >
         Fit
       </button>
+      <button
+        type="button"
+        class="xs"
+        class:pri={studio.timelineAutoScroll && !userPausedAutoScroll}
+        class:ghost={!studio.timelineAutoScroll || userPausedAutoScroll}
+        onclick={toggleAutoScroll}
+        title={studio.timelineAutoScroll
+          ? (userPausedAutoScroll
+            ? 'Auto-scroll paused while inspecting — click to resume following playhead'
+            : 'Auto-scroll active — keeping playhead centered during playback (click to disable)')
+          : 'Enable timeline auto-scroll during playback'}
+        aria-label="Timeline auto-scroll"
+        style="gap:5px"
+      >
+        {#if userPausedAutoScroll}
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent-amber);display:inline-block"></span>
+        {:else}
+          <Icon name="locate" size={12} />
+        {/if}
+        <span>{userPausedAutoScroll ? 'Resume' : 'Auto-Scroll'}</span>
+      </button>
     </div>
   </div>
 
@@ -421,9 +550,12 @@
 
     <div
       class="tl-scroll"
+      role="presentation"
       bind:this={scrollEl}
-      onscroll={() => (scrollLeft = scrollEl?.scrollLeft || 0)}
+      onscroll={onScrollTimeline}
       onwheel={onWheelTimeline}
+      onpointerdown={markUserTimelineInteraction}
+      ontouchstart={markUserTimelineInteraction}
     >
       <div
         class="lane"

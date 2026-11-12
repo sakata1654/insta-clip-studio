@@ -174,6 +174,9 @@ class StudioStore {
   speed = $state(1);
   previewScale = $state(0.5);
   timelineZoom = $state(1);
+  timelineAutoScroll = $state(
+    typeof localStorage !== 'undefined' && localStorage.icsTlAutoScroll === '0' ? false : true
+  );
   audioDuration = $state(0);
   exporting = $state(false);
   exportPct = $state(0);
