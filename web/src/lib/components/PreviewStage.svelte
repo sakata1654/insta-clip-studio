@@ -182,6 +182,7 @@
   const inBox = (b, x, y) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 
   function onPointerDown(e) {
+    if (studio.eyeDropper?.active) return;
     touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touchPts.size === 2) {
       const pts = [...touchPts.values()];

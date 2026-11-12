@@ -1,6 +1,8 @@
 <script>
   import { hsv2rgb, rgb2hsv } from '../renderer.js';
   import { hex2, rgb2hex, studio } from '../state.svelte.js';
+  import { isNativeEyeDropperSupported, rgbToHsl, tryNativeEyeDropper } from '../colorDropper.js';
+  import Icon from './Icon.svelte';
 
   const PAL = ['#ffffff', '#000000', '#ffd400', '#ff3d81', '#ff5a36', '#00ffd0', '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ef4444', '#94a3b8'];
 
@@ -11,6 +13,8 @@
   let hexInput = $state('#ffffff');
   let dragging = $state(false);
   let recent = $state([]);
+
+  const nativeSupported = $derived(isNativeEyeDropperSupported());
 
   try {
     recent = JSON.parse(localStorage.ics || '[]');
@@ -87,12 +91,20 @@
     studio.colorPicker.open = false;
   }
 
-  async function pickEyeDropper() {
-    if (!window.EyeDropper) return;
-    try {
-      const res = await new window.EyeDropper().open();
-      setFromHex(res.sRGBHex, true);
-    } catch {}
+  function activateInAppDropper() {
+    studio.startEyeDropper((pickedHex) => {
+      setFromHex(pickedHex, true);
+    }, hexInput);
+  }
+
+  async function activateNativeDropper() {
+    const res = await tryNativeEyeDropper();
+    if (res && res.hex) {
+      setFromHex(res.hex, true);
+    } else {
+      // If user cancelled native dropper or it's restricted, fallback to in-app dropper
+      activateInAppDropper();
+    }
   }
 </script>
 
@@ -138,7 +150,7 @@
       }}
     />
 
-    <div class="rt">
+    <div class="rt" style="gap:6px">
       <div style="width:26px;height:26px;border-radius:6px;border:1px solid #fff4;background:{hexInput};flex:none"></div>
       <input
         class="mono"
@@ -150,8 +162,26 @@
           if (/^#?[0-9a-f]{6}$/i.test(v)) setFromHex(v[0] === '#' ? v : '#' + v, true);
         }}
       />
-      {#if typeof window !== 'undefined' && 'EyeDropper' in window}
-        <button type="button" class="sm" onclick={pickEyeDropper} title="Eyedropper">Pipette</button>
+      <!-- Universal In-App Eyedropper with Precision Loupe -->
+      <button
+        type="button"
+        class="sm icon-btn dropper-btn"
+        onclick={activateInAppDropper}
+        title="Sample color from Video Preview or Canvas (Magnifier Loupe)"
+      >
+        <Icon name="eyedropper" size={13} />
+        <span>Dropper</span>
+      </button>
+
+      {#if nativeSupported}
+        <button
+          type="button"
+          class="xs ghost"
+          onclick={activateNativeDropper}
+          title="Sample color from OS Desktop Screen"
+        >
+          OS
+        </button>
       {/if}
     </div>
 
@@ -172,7 +202,7 @@
   .pk-popover {
     position: fixed;
     z-index: 80;
-    width: 246px;
+    width: 254px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-strong);
     border-radius: 14px;
@@ -183,5 +213,14 @@
     height: 11px;
     margin: 10px 0;
     background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  }
+  .dropper-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    font-size: 11.5px;
+    font-weight: 550;
+    white-space: nowrap;
   }
 </style>

@@ -183,6 +183,7 @@
   const inBox = (b, x, y) => b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 
   function onPointerDown(e) {
+    if (studio.eyeDropper?.active) return;
     const [x, y] = cp(e);
     const fb = studio.frBox;
     const box = studio.fr.on && fb ? fb : { x: 0, y: 0, w: studio.LW, h: studio.LH };

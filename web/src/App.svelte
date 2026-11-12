@@ -5,6 +5,7 @@
   import { viewport } from './lib/webPlatform/viewport.svelte.js';
 
   import ColorPickerPopover from './lib/components/ColorPickerPopover.svelte';
+  import EyedropperLoupe from './lib/components/EyedropperLoupe.svelte';
   import HeaderBar from './lib/components/HeaderBar.svelte';
   import Icon from './lib/components/Icon.svelte';
   import InspectorPanel from './lib/components/InspectorPanel.svelte';
@@ -431,6 +432,7 @@
 <ExportModal />
 <ConfirmModal />
 <ColorPickerPopover />
+<EyedropperLoupe />
 
 {#if dragHover}
   <div class="drop-overlay">Drop video file to open in Studio</div>

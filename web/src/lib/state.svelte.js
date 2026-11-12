@@ -116,7 +116,23 @@ class StudioStore {
   // Toast, Confirm & UI Overlays
   toastMsg = $state('');
   apiModalOpen = $state(false);
-  colorPicker = $state({ open: false, x: 100, y: 100, hex: '#ffffff', onChange: null });
+  colorPicker = $state({ open: false, x: 100, y: 100, hex: '#ffffff', onChange: null, wasOpenBeforeDropper: false });
+  eyeDropper = $state({
+    active: false,
+    x: 0,
+    y: 0,
+    hex: '#ffffff',
+    rgb: [255, 255, 255, 255],
+    rgbStr: 'rgb(255, 255, 255)',
+    hsl: [0, 0, 100],
+    sourceLabel: 'Screen',
+    patch: null,
+    patchWidth: 11,
+    patchHeight: 11,
+    patchOffsetX: 5,
+    patchOffsetY: 5,
+    onPick: null,
+  });
   confirmDialog = $state({ open: false, title: '', message: '', confirmText: 'Confirm', cancelText: 'Cancel', danger: false, resolve: null });
 
   // Active Project State
@@ -329,6 +345,54 @@ class StudioStore {
     const r = this.confirmDialog.resolve;
     this.confirmDialog = { ...this.confirmDialog, open: false, resolve: null };
     r?.(!!ok);
+  }
+
+  startEyeDropper(onPick, initialHex = '#ffffff') {
+    this.eyeDropper = {
+      active: true,
+      x: typeof window !== 'undefined' ? Math.round(window.innerWidth / 2) : 200,
+      y: typeof window !== 'undefined' ? Math.round(window.innerHeight / 2) : 200,
+      hex: initialHex,
+      rgb: [255, 255, 255, 255],
+      rgbStr: 'rgb(255, 255, 255)',
+      hsl: [0, 0, 100],
+      sourceLabel: 'Screen',
+      patch: null,
+      patchWidth: 11,
+      patchHeight: 11,
+      patchOffsetX: 5,
+      patchOffsetY: 5,
+      onPick,
+    };
+    if (this.colorPicker.open) {
+      this.colorPicker.wasOpenBeforeDropper = true;
+      this.colorPicker.open = false;
+    }
+  }
+
+  cancelEyeDropper() {
+    this.eyeDropper.active = false;
+    this.eyeDropper.onPick = null;
+    if (this.colorPicker.wasOpenBeforeDropper) {
+      this.colorPicker.open = true;
+      this.colorPicker.wasOpenBeforeDropper = false;
+    }
+  }
+
+  commitEyeDropper(sample) {
+    const hex = typeof sample === 'string' ? sample : sample?.hex || '#ffffff';
+    if (this.eyeDropper.onPick) {
+      this.eyeDropper.onPick(hex);
+    }
+    this.eyeDropper.active = false;
+    this.eyeDropper.onPick = null;
+    if (this.colorPicker.wasOpenBeforeDropper) {
+      this.colorPicker.hex = hex;
+      this.colorPicker.open = true;
+      this.colorPicker.wasOpenBeforeDropper = false;
+    }
+    this.inv();
+    this.snap();
   }
 
   inv(markUnsaved = true) {
