@@ -18,6 +18,7 @@
 
   import ProjectHome from './lib/components/views/ProjectHome.svelte';
   import TranslateView from './lib/components/views/TranslateView.svelte';
+  import AiClipsView from './lib/components/views/AiClipsView.svelte';
 
   import AiToolsWorkflow from './lib/components/workflows/AiToolsWorkflow.svelte';
   import AudioWorkflow from './lib/components/workflows/AudioWorkflow.svelte';
@@ -179,6 +180,8 @@
 
   {#if studio.nav === 'tr'}
     <TranslateView />
+  {:else if studio.nav === 'ai'}
+    <AiClipsView />
   {:else}
     <ToolRail bind:active={studio.leftTab} />
 

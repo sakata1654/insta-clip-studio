@@ -1,26 +1,39 @@
 import { ISLAMIC_TERM_MODES, TRSTYLE } from './constants.js';
 import { getTauri } from './tauriBridge.js';
+import { autoRepairCues, intelligentSemanticSegment } from './transcriptEngine/semanticSegmenter.js';
 
 /**
- * Minbar-caption inspired AI & Segmentation Engine:
- * 1. Punctuation + silence gap lookback splitter (maxWords = 8 default, overlap-safe +-500ms padding)
- * 2. AI semantic word-boundary rearranger (REARRANGE_SYSTEM_PROMPT — immutable words)
+ * Intelligent Subtitle Segmentation 2.0 & Translation Engine:
+ * 1. 3-Pass Semantic Segmentation (Discourse reconstruction, DP clause slicing, Auto-Repair)
+ * 2. AI semantic word-boundary rearranger (REARRANGE_SYSTEM_PROMPT — Baian AI inspired)
  * 3. Conservative ASR proofreader (CORRECT_TRANSCRIPTION_SYSTEM_PROMPT)
  * 4. Context-aware subtitle translator with durationMs, pauseBeforeMs, contextGapBefore,
  *    Islamic terminology rules, Salawat rule, and explicit `issue` uncertainty field.
  */
 
-export const REARRANGE_SYSTEM_PROMPT = `You are a multilingual subtitle editor, especially skilled in Arabic, Urdu, and English lectures, sermons, poetry and nasheed.
-Read the timeline in chronological order. Speech entries contain ORIGINAL words and timestamps in seconds, not existing subtitle segments.
-Split each speech block into natural, readable units of meaning of approximately 8–12 words (6–14 words when needed for complete grammar; shorter only for standalone sentences or expressions).
-Combine linguistic structure AND measured audio pauses (s/e timestamps):
-- Prefer complete grammatical clauses, meaningful noun/verb phrases, and natural speaking pauses (>=0.35s).
-- Do NOT break at every tiny hesitation mid-phrase, and NEVER sacrifice readability for rigid word counts.
-- NEVER separate articles (the, a, an) from their nouns, prepositions/postpositions (in, on, of, to, towards, في, من, على, کو, میں, سے, کا, کی, کے) from their complements, auxiliary verbs from main verbs, names from titles/honorifics (Prophet Muhammad ﷺ, صلى الله عليه وسلم), or dependent words from what completes them.
-Never rewrite, add, or omit any word. Respect preferences.maxWords and preferences.maxDuration (seconds).
-Return JSON only: {"blocks":[{"id":0,"ends":[8,19]}]}.
-Return exactly one object for every input speech block, in input order, with its unchanged id.
-ends are strictly increasing EXCLUSIVE word counts local to that block (1-based index of each segment's last word). The final end MUST equal that block's word count.`;
+export const REARRANGE_SYSTEM_PROMPT = `You are an elite multilingual subtitle editor inspired by Baian AI and broadcast subtitling standards (Arabic, Urdu, and English).
+Your task is to divide speech into grammatically complete, natural, and fluent subtitle segments.
+
+CORE OBJECTIVE:
+- Each subtitle cue MUST represent a coherent unit of thought.
+- Preferred cue length: 8–12 words. (Acceptable range: 6–14 words).
+- Standalone short sentences (e.g. 5-10 words) MUST be preserved as a single cue, NEVER chopped into pieces!
+  Example: "So Islam itself is a complete framework of noble character." is ONE cue (10 words), NEVER split!
+
+STRICT GRAMMATICAL INTEGRITY RULES:
+1. NEVER cut between a Subject and its Verb / Copula.
+   BAD: [So Islam itself] | [is a complete framework of noble character.]
+   GOOD: [So Islam itself is a complete framework of noble character.]
+2. NEVER leave a preposition, article, or conjunction stranded at the end of a subtitle cue (e.g. "of", "in", "to", "for", "with", "the", "a", "an", "that", "کا", "کی", "کے", "میں", "في", "من", "على").
+3. NEVER start a subtitle cue with an orphaned relative pronoun or subordinating particle without its clause (e.g. starting with "that they accepted Islam" when separated from the main clause).
+4. NEVER separate names from titles or honorifics:
+   - "The Prophet Muhammad ﷺ" MUST stay together.
+   - "صلى الله عليه وسلم", "رضي الله عنه" must never be isolated on their own line.
+5. In compound sentences, split ONLY at major clause conjunctions (and, but, however, because, while) where both parts form complete, readable thoughts.
+
+OUTPUT CONTRACT:
+Return JSON only: {"blocks":[{"id":0,"ends":[10,21]}]}.
+ends are strictly increasing 1-based exclusive word counts for each subtitle boundary. The last end MUST equal the total word count.`;
 
 export const CORRECT_TRANSCRIPTION_SYSTEM_PROMPT = `You are a conservative multilingual speech-to-text proofreader, especially familiar with Arabic/Urdu sermons, poetry and nasheed.
 Read all subtitles and their surrounding context. You have TEXT ONLY, not the recording: never claim to have heard or verified the audio.
@@ -327,20 +340,7 @@ function segmentRunWithDP(run, maxChars, maxWords, maxDur, nextId) {
  */
 export function splitByLimits(words, maxChars = 84, maxWords = 12, maxDur = 8, nextId = () => Date.now() + Math.random()) {
   if (!words?.length) return [];
-  // Pre-partition only on hard silence gaps (>= 1.25s) or oversized continuous runs (<= 140w) for O(N) speed
-  const out = [];
-  let runStart = 0;
-  for (let i = 1; i <= words.length; i++) {
-    const atEnd = i === words.length;
-    const hardPause = !atEnd && words[i].s - words[i - 1].e >= 1.25;
-    const safeSentenceChunk = !atEnd && i - runStart >= 85 && isSentencePunct(words[i - 1].w);
-    const maxChunk = !atEnd && i - runStart >= 140;
-    if (atEnd || hardPause || safeSentenceChunk || maxChunk) {
-      out.push(...segmentRunWithDP(words.slice(runStart, i), maxChars, maxWords, maxDur, nextId));
-      runStart = i;
-    }
-  }
-  return out;
+  return intelligentSemanticSegment(words, { maxChars, maxWords, maxDur, nextId });
 }
 
 function cleanWordTimingSlice(ws, s, e, text) {
@@ -530,30 +530,27 @@ export function segsToSubs(segs, maxChars = 84, maxWords = 12, maxDur = 8, nextI
 
   if (!hasLimits) return rawList;
 
-  // Group contiguous ASR segments across sentence/pause boundaries so choppy fragments unify into 8-12w phrases before DP split
+  // Collect all timed words and apply 3-Pass Intelligent Semantic Segmentation
+  const allWords = [];
   const out = [];
-  let bufWords = [];
-  const flushWords = () => {
-    if (!bufWords.length) return;
-    out.push(...splitByLimits(bufWords, maxChars, maxWords, maxDur, nextId));
-    bufWords = [];
-  };
 
   for (const item of rawList) {
     if (!item.words?.length) {
-      flushWords();
+      if (allWords.length) {
+        out.push(...intelligentSemanticSegment(allWords, { maxChars, maxWords, maxDur, nextId }));
+        allWords.length = 0;
+      }
       out.push(item);
       continue;
     }
-    const prevLast = bufWords.length ? bufWords[bufWords.length - 1] : null;
-    const firstNew = item.words[0];
-    const gap = prevLast ? firstNew.s - prevLast.e : 0;
-    const prevEndedSentence = prevLast && isSentencePunct(prevLast.w);
-    if (prevLast && (gap >= 1.1 || prevEndedSentence)) flushWords();
-    bufWords.push(...item.words);
+    allWords.push(...item.words);
   }
-  flushWords();
-  return out;
+
+  if (allWords.length) {
+    out.push(...intelligentSemanticSegment(allWords, { maxChars, maxWords, maxDur, nextId }));
+  }
+
+  return autoRepairCues(out, { maxChars, maxWords, maxDur }, nextId);
 }
 
 /**
@@ -638,9 +635,9 @@ export function mergeSentenceSubtitles(items, limits = {}) {
     const overChars = maxC > 0 && comb.length > maxC;
     const overWords = maxW > 0 && words.length > maxW;
     const overDur = (Number(cur.rawE ?? cur.e) - Number(prev.rawS ?? prev.s)) > maxD;
-    // Merge only when one side is short (< 6 words) and no punctuation/pause boundary exists
-    const needsRepair = prevWords < 6 || curWords < 6;
-    if (!needsRepair || ends.test(prev.t) || gap >= 0.7 || overChars || overWords || overDur) {
+    // Merge when either side is short (< 6 words) or previous did not end with terminal punctuation
+    const needsRepair = prevWords < 6 || curWords < 6 || !ends.test(prev.t);
+    if (!needsRepair || (ends.test(prev.t) && gap >= 0.5) || gap >= 1.35 || overChars || overWords || overDur) {
       out.push(cur);
     } else {
       prev.t = comb;
@@ -649,7 +646,7 @@ export function mergeSentenceSubtitles(items, limits = {}) {
       if (prev.words && cur.words) prev.words.push(...cur.words);
     }
   }
-  return out;
+  return autoRepairCues(out, limits);
 }
 
 export function applyGenreSegmentation(items, genre, limits = {}) {
@@ -851,42 +848,47 @@ export async function aiSemanticRearrange(subs, aiCfg, limits, onNote) {
     ],
   };
 
-  if (onNote) onNote('AI rearranging subtitle phrasing cleanly…');
-  const res = await aiCallJson(
-    aiCfg,
-    `Split this word sequence into natural subtitle segments.\n\nINPUT:\n${JSON.stringify(payload)}`,
-    REARRANGE_SYSTEM_PROMPT,
-    onNote
-  );
+  try {
+    if (onNote) onNote('AI analyzing lecture discourse & semantic clauses…');
+    const res = await aiCallJson(
+      aiCfg,
+      `Split this word sequence into natural, grammatically intact subtitle segments.\n\nINPUT:\n${JSON.stringify(payload)}`,
+      REARRANGE_SYSTEM_PROMPT,
+      onNote
+    );
 
-  const blk = (res?.blocks || []).find((b) => +b.id === 0) || res?.blocks?.[0];
-  const ends = blk?.ends;
-  if (
-    !Array.isArray(ends) ||
-    !ends.length ||
-    ends[ends.length - 1] !== words.length ||
-    ends.some((end, i) => !Number.isInteger(end) || end <= (ends[i - 1] ?? 0) || end > words.length)
-  ) {
-    throw new Error('AI returned invalid boundary indexes; keeping current segmentation.');
-  }
+    const blk = (res?.blocks || []).find((b) => +b.id === 0) || res?.blocks?.[0];
+    const ends = blk?.ends;
+    if (
+      !Array.isArray(ends) ||
+      !ends.length ||
+      ends[ends.length - 1] !== words.length ||
+      ends.some((end, i) => !Number.isInteger(end) || end <= (ends[i - 1] ?? 0) || end > words.length)
+    ) {
+      throw new Error('AI returned invalid boundary indexes; falling back to local semantic engine.');
+    }
 
-  const out = [];
-  let prevEnd = 0;
-  for (const end of ends) {
-    const slice = words.slice(prevEnd, end);
-    prevEnd = end;
-    const rs = slice[0].s;
-    const re = slice[slice.length - 1].e;
-    out.push({
-      s: rs,
-      e: re,
-      rawS: rs,
-      rawE: re,
-      t: normalizeArabicSubtitlePunctuation(slice.map((x) => x.w).join(' ')),
-      words: slice,
-    });
+    const out = [];
+    let prevEnd = 0;
+    for (const end of ends) {
+      const slice = words.slice(prevEnd, end);
+      prevEnd = end;
+      const rs = slice[0].s;
+      const re = slice[slice.length - 1].e;
+      out.push({
+        s: rs,
+        e: re,
+        rawS: rs,
+        rawE: re,
+        t: normalizeArabicSubtitlePunctuation(slice.map((x) => x.w).join(' ')),
+        words: slice,
+      });
+    }
+    return autoRepairCues(out, limits);
+  } catch (err) {
+    if (onNote) onNote('Falling back to local intelligent semantic segmentation…');
+    return intelligentSemanticSegment(words, limits);
   }
-  return out;
 }
 
 /**

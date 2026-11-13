@@ -514,6 +514,18 @@
         <span style="flex:1"></span>
         <button
           type="button"
+          class="sm pri"
+          onclick={() => {
+            studio.rewrapAndPad();
+            studio.toast('Applied Intelligent Semantic Segmentation 2.0');
+          }}
+          title="Auto-balance cues into complete grammatical sentences and fix fragmented cuts"
+        >
+          <Icon name="sparkles" size={13} />
+          <span>Auto-Fix & Balance Phrasing</span>
+        </button>
+        <button
+          type="button"
           class="sm"
           onclick={() => {
             studio.expandPipeSubtitles(false);

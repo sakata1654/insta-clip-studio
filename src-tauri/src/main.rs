@@ -753,7 +753,7 @@ fn elevenlabs_words_to_segments(words: &[Value], fallback_text: &str, total_dura
             let cur_dur = tok.1 - cur[0].0;
             let cur_chars: usize = cur.iter().map(|x| x.2.chars().count() + 1).sum();
             let word_limit = (if max_words > 0 { max_words } else { 12 }).saturating_mul(2).max(24);
-            if ends_sentence || speaker_changed || gap >= 0.85 || cur.len() >= word_limit || cur_chars >= 220 || cur_dur >= 14.0 {
+            if (ends_sentence && cur.len() >= 6) || speaker_changed || gap >= 1.6 || cur.len() >= word_limit || cur_chars >= 220 || cur_dur >= 14.0 {
                 flush(&mut cur, &mut segs);
             }
         }
@@ -848,11 +848,11 @@ fn groq_words_to_segments(words: &[(f64, f64, String)], fallback_text: &str, max
     for (s, e, text) in words {
         let prev_end = cur.last().map(|x| x.1).unwrap_or(*s);
         let gap = *s - prev_end;
-        if !cur.is_empty() && (cur.len() >= container_max || gap >= 0.85) {
+        if !cur.is_empty() && (cur.len() >= container_max || gap >= 1.6) {
             flush(&mut cur, &mut segs);
         }
         cur.push((*s, *e, text.clone()));
-        if cur.len() >= 3 && text.ends_with(['.', '!', '?', '؟', '۔', '…']) {
+        if cur.len() >= 6 && text.ends_with(['.', '!', '?', '؟', '۔', '…']) {
             flush(&mut cur, &mut segs);
         }
     }

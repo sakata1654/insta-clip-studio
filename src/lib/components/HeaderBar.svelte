@@ -87,13 +87,17 @@
 
   <div class="bar-center">
     <div class="mode-toggle" role="tablist" aria-label="Workspace view">
-      <button type="button" class:on={studio.nav !== 'tr'} onclick={() => (studio.nav = 'ed')}>
+      <button type="button" class:on={studio.nav !== 'tr' && studio.nav !== 'ai'} onclick={() => (studio.nav = 'ed')}>
         <Icon name="sliders" size={12} />
         <span>Timeline Editor</span>
       </button>
       <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
         <Icon name="languages" size={12} />
         <span>Transcript Studio</span>
+      </button>
+      <button type="button" class:on={studio.nav === 'ai'} onclick={() => (studio.nav = 'ai')}>
+        <Icon name="sparkles" size={12} />
+        <span>AI Clips</span>
       </button>
     </div>
   </div>

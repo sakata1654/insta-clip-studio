@@ -394,6 +394,15 @@
       type="button"
       class="xs"
       disabled={busy || !studio.subs.length}
+      onclick={() => studio.rewrapAndPad()}
+      title="Apply Intelligent Semantic Segmentation 2.0 to balance phrases and merge broken sentence fragments"
+    >
+      Semantic Balance
+    </button>
+    <button
+      type="button"
+      class="xs"
+      disabled={busy || !studio.subs.length}
       onclick={async () => {
         const cfg = studio.TR.key ? studio.TR : studio.API;
         if (!cfg.key) return (studio.apiModalOpen = true);
