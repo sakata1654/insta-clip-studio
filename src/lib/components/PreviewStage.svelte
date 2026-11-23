@@ -847,19 +847,19 @@
     box-sizing: border-box;
     pointer-events: none;
     z-index: 3;
-    border: 1.5px solid rgba(59, 130, 246, 0.92);
+    border: 1.5px solid var(--accent);
     border-radius: 4px;
-    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.45);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
     transition: border-color 120ms ease;
   }
   .sub-bbox.hoverOnly {
     border-style: dashed;
-    border-color: rgba(96, 165, 250, 0.78);
-    background: rgba(59, 130, 246, 0.04);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
   .sub-bbox.selected {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.05);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
   .sub-handle {
     position: absolute;
@@ -877,12 +877,13 @@
     left: 50%;
     transform: translate(-50%, -50%);
     background: #ffffff;
-    border: 1.5px solid #2563eb;
+    border: 1.5px solid var(--accent);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
     transition: transform 90ms ease, background 90ms ease;
   }
   .sub-handle:hover::after {
-    background: #dbeafe;
+    background: var(--accent-soft);
+    border-color: var(--accent-hover);
     transform: translate(-50%, -50%) scale(1.18);
   }
   .sub-handle.c {
@@ -920,16 +921,16 @@
     left: 50%;
     top: -24px;
     transform: translateX(-50%);
-    background: rgba(15, 23, 42, 0.9);
-    border: 1px solid rgba(59, 130, 246, 0.65);
-    color: #e2e8f0;
+    background: var(--bg-titlebar);
+    border: 1px solid var(--accent);
+    color: var(--text-primary);
     font-size: 10px;
     line-height: 1.3;
     padding: 2px 7px;
     border-radius: 99px;
     white-space: nowrap;
     pointer-events: none;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
   }
   .sub-dim-pill.below {
     top: auto;

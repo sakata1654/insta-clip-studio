@@ -49,12 +49,12 @@
   });
 
   const leftTitles = {
-    media: 'Media & Overlays',
-    subtitles: 'Subtitles',
-    banners: 'Titles & Banners',
-    look: 'Canvas & Color',
+    media: 'Media & Canvas',
+    subtitles: 'Transcription & Cues',
+    banners: 'Titles & Watermarks',
+    look: 'Style & Presets',
     audio: 'Audio & Mix',
-    ai: 'AI Tools',
+    ai: 'AI Lecture to Reels',
   };
 
   onMount(() => {
@@ -273,7 +273,7 @@
 <style>
   .nle-shell {
     display: grid;
-    grid-template-columns: 136px var(--left-w) 1fr var(--right-w);
+    grid-template-columns: 64px var(--left-w) 1fr var(--right-w);
     grid-template-rows: 46px 1fr var(--tl-h);
     grid-template-areas:
       'h h  h  h'
@@ -402,7 +402,7 @@
 
   @media (max-width: 1120px) {
     .nle-shell {
-      grid-template-columns: 108px 260px 1fr 270px;
+      grid-template-columns: 64px 260px 1fr 270px;
     }
   }
 </style>

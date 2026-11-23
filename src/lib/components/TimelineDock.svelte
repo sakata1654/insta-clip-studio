@@ -469,7 +469,7 @@
     </div>
 
     <div class="rt" style="gap:6px;margin-left:auto">
-      <span class="hint" style="margin:0;font-size:11px">Ctrl+Wheel zoom · Click blue button between subtitles to merge · Double-click to edit</span>
+      <span class="hint" style="margin:0;font-size:11px">Ctrl+Wheel zoom · Click merge button between cues · Double-click to edit</span>
       <span class="v-div"></span>
       <button
         type="button"
@@ -907,7 +907,7 @@
   .blk::before { left: 0; }
   .blk::after { right: 0; }
 
-  /* One-Click Blue Merge Button positioned cleanly between adjacent subtitle boundaries */
+  /* One-Click Merge Button positioned cleanly between adjacent subtitle boundaries */
   .merge-btn {
     position: absolute;
     top: 50%;
@@ -918,7 +918,7 @@
     min-height: 19px;
     padding: 0;
     border-radius: 99px;
-    background: #2563eb;
+    background: var(--accent);
     color: #ffffff;
     border: 1.5px solid var(--bg-canvas);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
@@ -929,7 +929,7 @@
     transition: transform 110ms ease, background 110ms ease;
   }
   .merge-btn:hover {
-    background: #3b82f6;
+    background: var(--accent-hover);
     transform: translate(-50%, -50%) scale(1.16);
   }
   .merge-btn:active {

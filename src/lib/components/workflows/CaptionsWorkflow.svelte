@@ -301,122 +301,131 @@
 </div>
 
 {#if studio.subTab === 'gen'}
-  <CategoryBlock title="Generate Subtitles" icon="subtitles" open={true}>
-    <div class="sg" style="margin-bottom:8px">
-      <label>
-        Provider
-        <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
-          <option value="groq">Groq</option>
-          <option value="elevenlabs">ElevenLabs</option>
-          <option value="faster">Local Whisper (faster-whisper)</option>
-          <option value="cohere">Cohere Transcribe</option>
-          <option value="cpp">whisper.cpp</option>
-        </select>
-      </label>
-      <label>
-        Model
-        {#if eng === 'groq'}
-          <select bind:value={groqModel} onchange={() => { try { localStorage.icsGroqAsrModel = groqModel; } catch {} }}>
-            <option value="whisper-large-v3">Whisper Large V3</option>
-            <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo</option>
-          </select>
-        {:else if eng === 'elevenlabs'}
-          <select bind:value={elModel} onchange={() => { try { localStorage.icsElModel = elModel; } catch {} }}>
-            <option value="scribe_v2">Scribe v2</option>
-            <option value="scribe_v1">Scribe v1</option>
-          </select>
-        {:else}
-          <select bind:value={whisperModel}>
-            <option value="auto">Auto (large-v3)</option>
-            <option value="large-v3">large-v3</option>
-            <option value="medium">medium</option>
-            <option value="small">small</option>
-          </select>
+  <CategoryBlock title="4-Step Intelligent Transcription Assistant" icon="sparkles" open={true}>
+    <div class="transcribe-steps">
+      <!-- Step 1: Audio & Content Language -->
+      <div class="transcribe-step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <div class="step-title">Audio &amp; Content Language</div>
+          <div class="sg">
+            <label>
+              Language
+              <select bind:value={lang}>
+                <option value="ur">Urdu (اردو)</option>
+                <option value="ar">Arabic (العربية)</option>
+                <option value="en">English</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="auto">Auto-detect</option>
+              </select>
+            </label>
+            <label>
+              Content Genre
+              <select bind:value={genre}>
+                <option value="speech">Speech / Lecture</option>
+                <option value="religious">Qur'an &amp; Hadith</option>
+                <option value="poetry">Poem / Nasheed</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: AI Engine & Model -->
+      <div class="transcribe-step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <div class="step-title">AI Engine &amp; Speech Model</div>
+          <div class="sg" style="margin-bottom:6px">
+            <label>
+              Provider
+              <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
+                <option value="groq">Groq (Whisper Large V3)</option>
+                <option value="elevenlabs">ElevenLabs Scribe</option>
+                <option value="faster">Local Whisper (faster-whisper)</option>
+                <option value="cohere">Cohere Transcribe</option>
+                <option value="cpp">whisper.cpp</option>
+              </select>
+            </label>
+            <label>
+              Model
+              {#if eng === 'groq'}
+                <select bind:value={groqModel} onchange={() => { try { localStorage.icsGroqAsrModel = groqModel; } catch {} }}>
+                  <option value="whisper-large-v3">Whisper Large V3</option>
+                  <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo</option>
+                </select>
+              {:else if eng === 'elevenlabs'}
+                <select bind:value={elModel} onchange={() => { try { localStorage.icsElModel = elModel; } catch {} }}>
+                  <option value="scribe_v2">Scribe v2</option>
+                  <option value="scribe_v1">Scribe v1</option>
+                </select>
+              {:else}
+                <select bind:value={whisperModel}>
+                  <option value="auto">Auto (large-v3)</option>
+                  <option value="large-v3">large-v3</option>
+                  <option value="medium">medium</option>
+                  <option value="small">small</option>
+                </select>
+              {/if}
+            </label>
+          </div>
+
+          {#if eng === 'groq' && !groqKey}
+            <div class="sub-card" style="margin-top:6px">
+              <div class="rt">
+                <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
+                <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+              </div>
+              {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+            </div>
+          {:else if eng === 'elevenlabs' && !elKey}
+            <div class="sub-card" style="margin-top:6px">
+              <div class="rt">
+                <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
+                <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+              </div>
+              {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Step 3: Semantic Segmentation 2.0 -->
+      <div class="transcribe-step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <div class="step-title">Intelligent Semantic Segmentation 2.0</div>
+          <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
+            <label>Max words<input type="number" min="3" max="30" bind:value={studio.subCfg.maxWords} /></label>
+            <label>Pad before ms<input type="number" min="0" max="1500" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
+            <label>Pad after ms<input type="number" min="0" max="1500" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Transcribe & Progress -->
+      <div class="transcribe-step">
+        <button type="button" class="pri" style="width:100%;height:38px;font-size:12.8px" disabled={busy} onclick={generateSubs}>
+          <Icon name="sparkles" size={15} />
+          <span>{busy ? 'Transcribing & Aligning…' : 'Generate Intelligent Subtitles'}</span>
+        </button>
+        {#if busy || pct > 0}
+          <div class="pbar" style="margin:8px 0 4px"><i style="width:{pct}%"></i></div>
         {/if}
-      </label>
-    </div>
-
-    {#if eng === 'groq' && !groqKey}
-      <div class="sub-card" style="margin-bottom:8px">
-        <div class="rt">
-          <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
-          <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
-        </div>
-        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+        {#if status}<div class="hint" style="margin:3px 0 0">{status}</div>{/if}
       </div>
-    {:else if eng === 'elevenlabs' && !elKey}
-      <div class="sub-card" style="margin-bottom:8px">
-        <div class="rt">
-          <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
-          <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
-        </div>
-        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-      </div>
-    {/if}
-
-    <div class="sg">
-      <label>
-        Language
-        <select bind:value={lang}>
-          <option value="ur">Urdu</option>
-          <option value="ar">Arabic</option>
-          <option value="en">English</option>
-          <option value="hi">Hindi</option>
-          <option value="auto">Auto-detect</option>
-        </select>
-      </label>
-      <label>
-        Content Style
-        <select bind:value={genre}>
-          <option value="speech">Speech / Lecture</option>
-          <option value="poetry">Poem / Qasida</option>
-          <option value="religious">Religious / Hadith</option>
-        </select>
-      </label>
     </div>
-
-    <div class="bar" style="margin-top:10px;margin-bottom:2px">
-      <button type="button" class="pri" style="flex:1" disabled={busy} onclick={generateSubs}>
-        {busy ? 'Transcribing…' : 'Generate Subtitles'}
-      </button>
-    </div>
-    <div class="pbar"><i style="width:{pct}%"></i></div>
-    {#if status}<div class="hint" style="margin:2px 0 0">{status}</div>{/if}
 
     <button type="button" class="adv-toggle" aria-expanded={showAdvAsr} onclick={() => (showAdvAsr = !showAdvAsr)}>
-      <span>Advanced Transcription &amp; Segmentation</span>
+      <span>Vocabulary Hints &amp; Keyterms</span>
       <Icon name={showAdvAsr ? 'chev-up' : 'chev-down'} size={13} />
     </button>
 
     {#if showAdvAsr}
       <div class="adv-box">
-        {#if eng === 'groq'}
-          <div class="sub-card" style="margin-bottom:8px">
-            <div class="rt">
-              <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
-              <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
-            </div>
-            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-          </div>
-        {:else if eng === 'elevenlabs'}
-          <div class="sub-card" style="margin-bottom:8px">
-            <div class="rt">
-              <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
-              <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
-            </div>
-            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-          </div>
-        {/if}
-
-        <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-bottom:8px" />
-
-        <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
-          <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
-          <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
-          <label>Pad after ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
-        </div>
-        <button type="button" class="xs" style="width:100%;margin-top:6px" onclick={() => studio.rewrapAndPad()}>
-          Re-wrap Existing Subtitles
+        <input bind:value={hints} placeholder="Keyterms hint (speaker names, Arabic terms, Surah names…)" style="width:100%;margin-bottom:8px" />
+        <button type="button" class="xs" style="width:100%" onclick={() => studio.rewrapAndPad()}>
+          Re-wrap Existing Subtitles with Semantic Segmentation 2.0
         </button>
       </div>
     {/if}
@@ -595,15 +604,59 @@
 {/if}
 
 <style>
+  .transcribe-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .transcribe-step {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .transcribe-step:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+    display: block;
+  }
+  .step-badge {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .step-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
   .cue-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 8px;
+    border-radius: var(--radius-md);
+    padding: 8px 10px;
     margin-bottom: 7px;
+    transition: border-color var(--dur-fast) ease;
+  }
+  .cue-card:hover {
+    border-color: var(--border-mid);
   }
   .cue-card.act {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 1px var(--accent-primary-soft);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-soft);
   }
 </style>

@@ -51,12 +51,12 @@
   });
 
   const leftTitles = {
-    media: 'Media & Overlays',
-    subtitles: 'Subtitles',
-    banners: 'Titles & Banners',
-    look: 'Canvas & Color',
+    media: 'Media & Canvas',
+    subtitles: 'Transcription & Cues',
+    banners: 'Titles & Watermarks',
+    look: 'Style & Presets',
     audio: 'Audio & Mix',
-    ai: 'AI Tools',
+    ai: 'AI Lecture to Reels',
   };
 
   const mobileNavItems = [
@@ -445,7 +445,7 @@
 <style>
   .nle-shell {
     display: grid;
-    grid-template-columns: 136px var(--left-w) 1fr var(--right-w);
+    grid-template-columns: 64px var(--left-w) 1fr var(--right-w);
     grid-template-rows: calc(46px + var(--sat)) 1fr var(--tl-h);
     grid-template-areas:
       'h h  h  h'
@@ -457,7 +457,7 @@
   }
 
   .nle-shell.mode-small-desktop {
-    grid-template-columns: 108px var(--left-w) 1fr var(--right-w);
+    grid-template-columns: 64px var(--left-w) 1fr var(--right-w);
   }
 
   /* Tablet Landscape: Collapsible left tools & right inspector around generous center preview + timeline */

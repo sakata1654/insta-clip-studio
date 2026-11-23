@@ -1,13 +1,11 @@
 <script>
   import { tick, onMount } from 'svelte';
   import { fmt, studio } from '../state.svelte.js';
-  import { viewport } from '../webPlatform/viewport.svelte.js';
   import Icon from './Icon.svelte';
 
   let laneEl = $state(null);
   let scrollEl = $state(null);
   let drag = $state(null);
-  let trackFocus = $state('all'); // 'all' | 'core' | 'subs' | 'layers'
   let scrollLeft = $state(0);
   let viewWidth = $state(900);
   let editingId = $state(null);
@@ -21,7 +19,6 @@
 
   const touchPts = new Map();
   let pinchState = null;
-  let longPressTimer = null;
 
   function focusOnMount(node) {
     queueMicrotask(() => {
@@ -40,11 +37,6 @@
   const pxPerSec = $derived(laneWidth / Math.max(0.1, d));
   const phPx = $derived((studio.playhead / d) * laneWidth);
 
-  const showAllTracks = $derived(!viewport.isMobile || studio.timelineExpanded || trackFocus === 'all');
-  const showVA = $derived(showAllTracks || trackFocus === 'core');
-  const showSubs = $derived(showAllTracks || trackFocus === 'subs');
-  const showLayers = $derived(showAllTracks || trackFocus === 'layers');
-
   // Logarithmic 0..100 slider mapping <-> [1 .. maxZoom] for silky-smooth progressive zoom
   const zoomSlider = $derived(
     maxZoom <= 1 ? 0 : Math.round((Math.log(Math.max(1, studio.timelineZoom || 1)) / Math.log(maxZoom)) * 100)
@@ -55,9 +47,11 @@
   const visEnd = $derived(Math.min(d, ((scrollLeft + viewWidth) / laneWidth) * d + d * (0.15 / (studio.timelineZoom || 1))));
 
   const sortedSubs = $derived([...studio.subs].sort((a, b) => a.s - b.s));
-  const visibleSubs = $derived(sortedSubs.filter((o) => o.e >= visStart && o.s <= visEnd));
+  const visibleSubs = $derived(
+    sortedSubs.filter((o) => o.e >= visStart && o.s <= visEnd)
+  );
 
-  // One-click blue merge button between visible chronological adjacent subtitles
+  // One-click merge pairs between adjacent chronological subtitles visible in viewport
   const visibleMergePairs = $derived.by(() => {
     const pairs = [];
     for (let i = 0; i < sortedSubs.length - 1; i++) {
@@ -81,12 +75,12 @@
     return pairs;
   });
 
-  // Dynamic precision time ruler synchronized cleanly at every zoom level
+  // Dynamic precision time ruler (sub-second -> minutes) culled to visible scroll window
   const ticks = $derived.by(() => {
     const candidates = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
     let step = candidates[candidates.length - 1];
     for (const c of candidates) {
-      if (c * pxPerSec >= 70) {
+      if (c * pxPerSec >= 72) {
         step = c;
         break;
       }
@@ -107,7 +101,7 @@
     if (!scrollEl) return;
     const syncSize = () => {
       if (!scrollEl) return;
-      viewWidth = Math.max(180, scrollEl.clientWidth);
+      viewWidth = Math.max(200, scrollEl.clientWidth);
       scrollLeft = scrollEl.scrollLeft;
     };
     syncSize();
@@ -203,7 +197,7 @@
       return;
     }
     const rect = scrollEl.getBoundingClientRect();
-    let offsetInView = phPx - scrollEl.scrollLeft;
+    let offsetInView = (phPx - scrollEl.scrollLeft);
     let anchorT = studio.playhead;
     if (anchorClientX !== null) {
       offsetInView = Math.max(0, Math.min(scrollEl.clientWidth, anchorClientX - rect.left));
@@ -234,7 +228,7 @@
 
   function maybeSnap(val, ignoreId = null) {
     if (!studio.snapGrid) return val;
-    const tol = Math.max(0.03, 10 / Math.max(1, pxPerSec));
+    const tol = Math.max(0.03, (10 / Math.max(1, pxPerSec)));
     const points = [0, studio.playhead, studio.trimS, studio.trimE];
     for (const s of sortedSubs) {
       if (s.id !== ignoreId && s.e >= visStart - 5 && s.s <= visEnd + 5) points.push(s.s, s.e);
@@ -249,11 +243,6 @@
       }
     }
     return best;
-  }
-
-  function clearLongPress() {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
   }
 
   function startInlineEdit(sub) {
@@ -278,36 +267,8 @@
     }
   }
 
-  function inspectBlock(blk) {
-    if (!blk) return;
-    const id = +blk.dataset.id;
-    userPausedAutoScroll = false;
-    if (blk.dataset.tr === 'sb') {
-      const sub = studio.subs.find((x) => x.id === id);
-      if (!sub) return;
-      studio.sel = id;
-      studio.seek(sub.s);
-      studio.leftTab = 'subtitles';
-      studio.sideTab = 'subs';
-      if (!viewport.isCoarse) startInlineEdit(sub);
-    } else if (blk.dataset.tr === 'tx') {
-      const tx = studio.texts.find((x) => x.id === id);
-      if (!tx) return;
-      studio.sel = id;
-      studio.selectedOverlayId = null;
-      studio.seek(tx.s);
-      studio.leftTab = 'banners';
-      studio.sideTab = 'txt';
-    } else if (blk.dataset.tr === 'ov') {
-      const ov = (studio.mediaOverlays || []).find((x) => x.id === id);
-      if (!ov) return;
-      studio.selectedOverlayId = id;
-      studio.sel = null;
-      studio.seek(ov.start || 0);
-      studio.leftTab = 'media';
-    }
-    if (viewport.isMobile) studio.mobileSheet = 'inspector';
-    else if (viewport.isTablet) studio.tabletInspectorOpen = true;
+  function cancelInlineEdit() {
+    editingId = null;
   }
 
   function onWheelTimeline(e) {
@@ -347,7 +308,6 @@
     markUserTimelineInteraction();
     touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touchPts.size === 2) {
-      clearLongPress();
       const pts = [...touchPts.values()];
       const midX = (pts[0].x + pts[1].x) * 0.5;
       pinchState = {
@@ -361,27 +321,21 @@
 
     const blk = e.target.closest('.blk');
     if (!blk) {
-      const onRuler = !!e.target.closest('.ruler');
-      if (viewport.isCoarse && !onRuler && studio.timelineZoom > 1) {
-        drag = { k: 'tap-seek', x0: e.clientX, y0: e.clientY, moved: false };
-        return;
-      }
       drag = { k: 'seek' };
       userPausedAutoScroll = false;
       studio.seek(timeAtEvent(e));
-      try { laneEl.setPointerCapture(e.pointerId); } catch {}
+      laneEl.setPointerCapture(e.pointerId);
       return;
     }
-
     const r = blk.getBoundingClientRect();
-    const edgeTol = viewport.isCoarse ? Math.min(18, r.width * 0.3) : Math.min(10, Math.max(5, r.width * 0.22));
+    const edgeTol = Math.min(10, Math.max(5, r.width * 0.22));
     const m = e.clientX - r.left < edgeTol ? 'l' : r.right - e.clientX < edgeTol ? 'r' : 'm';
     const tr = blk.dataset.tr;
     if (tr === 'au') {
       drag = { k: 'seek' };
       userPausedAutoScroll = false;
       studio.seek(timeAtEvent(e));
-      try { laneEl.setPointerCapture(e.pointerId); } catch {}
+      laneEl.setPointerCapture(e.pointerId);
       return;
     }
     if (tr === 'vd') {
@@ -403,17 +357,9 @@
         studio.sel = o.id;
         studio.selectedOverlayId = null;
       }
-      clearLongPress();
-      if (viewport.isCoarse) {
-        longPressTimer = setTimeout(() => {
-          drag = null;
-          inspectBlock(blk);
-          studio.toast('Opened block properties');
-        }, 460);
-      }
-      drag = { k: 'blk', tr, o, m, x0: timeAtEvent(e), cx0: e.clientX, s0: o.s ?? o.start, e0: o.e ?? o.end };
+      drag = { k: 'blk', tr, o, m, x0: timeAtEvent(e), s0: o.s ?? o.start, e0: o.e ?? o.end };
     }
-    try { laneEl.setPointerCapture(e.pointerId); } catch {}
+    laneEl.setPointerCapture(e.pointerId);
   }
 
   function onPointerMove(e) {
@@ -427,11 +373,6 @@
       return;
     }
     if (!drag) return;
-    if (drag.k === 'tap-seek') {
-      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 6) drag.moved = true;
-      return;
-    }
-    if (drag.cx0 !== undefined && Math.abs(e.clientX - drag.cx0) > 6) clearLongPress();
     const t = timeAtEvent(e);
     if (drag.k === 'seek') {
       studio.seek(t);
@@ -471,16 +412,43 @@
 
   function onDoubleClick(e) {
     if (e.target.closest('.merge-btn')) return;
-    inspectBlock(e.target.closest('.blk'));
+    const blk = e.target.closest('.blk');
+    if (!blk) return;
+    const id = +blk.dataset.id;
+    userPausedAutoScroll = false;
+    if (blk.dataset.tr === 'sb') {
+      const sub = studio.subs.find((x) => x.id === id);
+      if (!sub) return;
+      studio.sel = id;
+      studio.seek(sub.s);
+      studio.leftTab = 'subtitles';
+      studio.sideTab = 'subs';
+      startInlineEdit(sub);
+    } else if (blk.dataset.tr === 'tx') {
+      const tx = studio.texts.find((x) => x.id === id);
+      if (!tx) return;
+      studio.sel = id;
+      studio.selectedOverlayId = null;
+      studio.seek(tx.s);
+      studio.leftTab = 'banners';
+      studio.sideTab = 'txt';
+    } else if (blk.dataset.tr === 'ov') {
+      const ov = (studio.mediaOverlays || []).find((x) => x.id === id);
+      if (!ov) return;
+      studio.selectedOverlayId = id;
+      studio.sel = null;
+      studio.seek(ov.start || 0);
+      studio.leftTab = 'media';
+    }
   }
 </script>
 
-<section class="tl-dock" class:expanded={studio.timelineExpanded} class:compact={viewport.isMobile} aria-label="Multi-track timeline">
+<section class="tl-dock" aria-label="Multi-track timeline">
   <div class="tl-tools">
     <div class="rt" style="gap:4px">
       <button type="button" class="xs ghost" onclick={() => studio.splitSelectedAtPlayhead()} title="Split selected subtitle at playhead (D)">
         <Icon name="scissors" size={13} />
-        <span>Split{#if !viewport.isCompact}<kbd class="kbd-hint">D</kbd>{/if}</span>
+        <span>Split <kbd class="kbd-hint">D</kbd></span>
       </button>
       <button
         type="button"
@@ -490,78 +458,62 @@
         title="Snap edges to playhead and adjacent blocks"
       >
         <Icon name="magnet" size={12} />
-        {#if !viewport.isSmallMobile}<span>Snap</span>{/if}
+        <span>Snap</span>
       </button>
       {#if studio.sel || studio.selectedOverlayId}
-        {#if viewport.isCompact}
-          <button
-            type="button"
-            class="xs pri"
-            onclick={() => {
-              if (viewport.isMobile) studio.mobileSheet = 'inspector';
-              else studio.tabletInspectorOpen = true;
-            }}
-          >
-            <Icon name="sliders" size={12} />
-            <span>Edit</span>
-          </button>
-        {/if}
         <button type="button" class="xs danger" onclick={() => studio.deleteSelectedBlock()} title="Delete selected block (Delete / Backspace)">
           <Icon name="trash" size={12} />
-          {#if !viewport.isMobile}<span>Delete<kbd class="kbd-hint">Del</kbd></span>{/if}
+          <span>Delete <kbd class="kbd-hint">Del</kbd></span>
         </button>
       {/if}
     </div>
 
-    {#if viewport.isMobile && !studio.timelineExpanded}
-      <div class="trk-filter">
-        <button type="button" class="xs" class:pri={trackFocus === 'all'} onclick={() => (trackFocus = 'all')}>All</button>
-        <button type="button" class="xs" class:pri={trackFocus === 'core'} onclick={() => (trackFocus = 'core')}>V1</button>
-        <button type="button" class="xs" class:pri={trackFocus === 'subs'} onclick={() => (trackFocus = 'subs')}>Subs</button>
-        <button type="button" class="xs" class:pri={trackFocus === 'layers'} onclick={() => (trackFocus = 'layers')}>OV</button>
-      </div>
-    {/if}
-
-    <div class="rt" style="gap:4px;margin-left:auto">
-      {#if !viewport.isCompact}
-        <span class="hint" style="margin:0;font-size:11px">Ctrl+Wheel zoom · Click blue button to merge</span>
-        <span class="v-div"></span>
-      {/if}
-      <button type="button" class="xs ghost" onclick={() => zoomByFactor(0.7)} title="Zoom out timeline" aria-label="Zoom out timeline">
+    <div class="rt" style="gap:6px;margin-left:auto">
+      <span class="hint" style="margin:0;font-size:11px">Ctrl+Wheel zoom · Click merge button between cues · Double-click to edit</span>
+      <span class="v-div"></span>
+      <button
+        type="button"
+        class="xs ghost"
+        onclick={() => zoomByFactor(0.7)}
+        title="Zoom out timeline"
+        aria-label="Zoom out timeline"
+      >
         <Icon name="zoom-out" size={13} />
       </button>
-      {#if !viewport.isMobile}
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          style="width:116px"
-          value={zoomSlider}
-          oninput={(e) => setZoomAnchored(sliderToZoom(e.currentTarget.value))}
-          aria-label="Timeline zoom"
-        />
-      {/if}
-      <button type="button" class="xs ghost" onclick={() => zoomByFactor(1.45)} title="Zoom in timeline" aria-label="Zoom in timeline">
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        style="width:124px"
+        value={zoomSlider}
+        oninput={(e) => setZoomAnchored(sliderToZoom(e.currentTarget.value))}
+        aria-label="Timeline zoom"
+      />
+      <button
+        type="button"
+        class="xs ghost"
+        onclick={() => zoomByFactor(1.45)}
+        title="Zoom in timeline"
+        aria-label="Zoom in timeline"
+      >
         <Icon name="zoom-in" size={13} />
       </button>
       <span class="badge mono">{studio.timelineZoom >= 10 ? Math.round(studio.timelineZoom) : studio.timelineZoom.toFixed(1).replace(/\.0$/, '')}×</span>
-      {#if !viewport.isMobile}
-        <button
-          type="button"
-          class="xs ghost"
-          onclick={() => {
-            studio.timelineZoom = 1;
-            if (scrollEl) {
-              scrollEl.scrollLeft = 0;
-              scrollLeft = 0;
-            }
-          }}
-          title="Fit full timeline to view"
-        >
-          Fit
-        </button>
-      {/if}
+      <button
+        type="button"
+        class="xs ghost"
+        onclick={() => {
+          studio.timelineZoom = 1;
+          if (scrollEl) {
+            scrollEl.scrollLeft = 0;
+            scrollLeft = 0;
+          }
+        }}
+        title="Fit full timeline to view"
+      >
+        Fit
+      </button>
       <button
         type="button"
         class="xs"
@@ -574,26 +526,14 @@
             : 'Auto-scroll active — keeping playhead centered during playback (click to disable)')
           : 'Enable timeline auto-scroll during playback'}
         aria-label="Timeline auto-scroll"
-        style="gap:4px"
+        style="gap:5px"
       >
         {#if userPausedAutoScroll}
           <span style="width:6px;height:6px;border-radius:50%;background:var(--accent-amber);display:inline-block"></span>
         {:else}
           <Icon name="locate" size={12} />
         {/if}
-        {#if !viewport.isCompact}
-          <span>{userPausedAutoScroll ? 'Resume' : 'Auto-Scroll'}</span>
-        {/if}
-      </button>
-      <button
-        type="button"
-        class="xs"
-        class:pri={studio.timelineExpanded}
-        onclick={() => (studio.timelineExpanded = !studio.timelineExpanded)}
-        title={studio.timelineExpanded ? 'Collapse timeline' : 'Expand full-screen timeline'}
-        aria-label="Toggle full-screen timeline"
-      >
-        <Icon name={studio.timelineExpanded ? 'minimize' : 'maximize'} size={12} />
+        <span>{userPausedAutoScroll ? 'Resume' : 'Auto-Scroll'}</span>
       </button>
     </div>
   </div>
@@ -601,17 +541,11 @@
   <div class="tl-body">
     <div class="tl-headers">
       <div class="hdr-ruler mono">{fmt(studio.playhead)}</div>
-      {#if showVA}
-        <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-video)"></span><span>{viewport.isMobile ? 'V1' : 'V1 Video'}</span></div>
-        <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-audio)"></span><span>{viewport.isMobile ? 'A1' : 'A1 Audio'}</span></div>
-      {/if}
-      {#if showSubs}
-        <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-sub)"></span><span>{viewport.isMobile ? 'S1' : 'S1 Subtitles'}</span></div>
-      {/if}
-      {#if showLayers}
-        <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-ov)"></span><span>{viewport.isMobile ? 'OV' : 'OV Overlays'}</span></div>
-        <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-txt)"></span><span>{viewport.isMobile ? 'T1' : 'T1 Text'}</span></div>
-      {/if}
+      <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-video)"></span><span>V1 Video</span></div>
+      <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-audio)"></span><span>A1 Audio</span></div>
+      <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-sub)"></span><span>S1 Subtitles</span></div>
+      <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-ov)"></span><span>OV Overlays</span></div>
+      <div class="hdr-row"><span class="trk-dot" style="background:var(--tl-txt)"></span><span>T1 Text</span></div>
     </div>
 
     <div
@@ -633,19 +567,12 @@
         onpointermove={onPointerMove}
         onpointerup={(e) => {
           touchPts.delete(e.pointerId);
-          clearLongPress();
           if (touchPts.size < 2) pinchState = null;
-          if (drag?.k === 'tap-seek' && !drag.moved) {
-            userPausedAutoScroll = false;
-            studio.seek(timeAtEvent(e));
-          } else if (drag && drag.k !== 'seek' && drag.k !== 'tap-seek') {
-            studio.snap();
-          }
+          if (drag && drag.k !== 'seek') studio.snap();
           drag = null;
         }}
         onpointercancel={(e) => {
           touchPts.delete(e.pointerId);
-          clearLongPress();
           pinchState = null;
           drag = null;
         }}
@@ -657,124 +584,116 @@
           {/each}
         </div>
 
-        {#if showVA}
-          <div class="trk">
-            {#each studio.shots.slice(1) as sh}
-              <u class="cut" style="left:{(sh.t / d) * 100}%"></u>
-            {/each}
+        <div class="trk">
+          {#each studio.shots.slice(1) as sh}
+            <u class="cut" style="left:{(sh.t / d) * 100}%"></u>
+          {/each}
+          <div
+            class="blk vd"
+            data-tr="vd"
+            style="left:{(studio.trimS / d) * 100}%;width:{((studio.trimE - studio.trimS) / d) * 100}%"
+          >
+            {studio.file?.name || 'Active Video'} · {fmt(studio.trimS)} – {fmt(studio.trimE)}
+          </div>
+        </div>
+
+        <div class="trk">
+          {#if studio.aud.track}
             <div
-              class="blk vd on"
-              data-tr="vd"
-              style="left:{(studio.trimS / d) * 100}%;width:{((studio.trimE - studio.trimS) / d) * 100}%"
+              class="blk au"
+              data-tr="au"
+              style="left:0;width:{Math.min(100, ((studio.audioDuration || d) / d) * 100)}%"
             >
-              {studio.file?.name || 'Active Video'} · {fmt(studio.trimS)} – {fmt(studio.trimE)}
+              {studio.aud.trackName || 'Audio track'} · {fmt(studio.audioDuration || d)}
             </div>
-          </div>
+          {:else}
+            <span class="empty-lane">Embedded video audio</span>
+          {/if}
+        </div>
 
-          <div class="trk">
-            {#if studio.aud.track}
-              <div class="blk au" data-tr="au" style="left:0;width:{Math.min(100, ((studio.audioDuration || d) / d) * 100)}%">
-                {studio.aud.trackName || 'Audio track'} · {fmt(studio.audioDuration || d)}
-              </div>
-            {:else if studio.audioPeaks?.length}
-              <div class="wave-lane" aria-hidden="true">
-                {#each studio.audioPeaks.filter((_, i) => i % 2 === 0) as pk}
-                  <i style="height:{Math.max(12, Math.round(pk * 100))}%"></i>
-                {/each}
-              </div>
-            {:else}
-              <span class="empty-lane">Embedded video audio</span>
-            {/if}
-          </div>
-        {/if}
+        <div class="trk sub-trk">
+          {#each visibleSubs as o (o.id)}
+            {@const blkPx = ((o.e - o.s) / d) * laneWidth}
+            <div
+              class="blk sb"
+              class:on={studio.sel === o.id || studio.act === o.id}
+              class:tiny={blkPx < 24}
+              class:wide={blkPx >= 150}
+              data-id={o.id}
+              data-tr="sb"
+              title={o.t}
+              style="left:{(o.s / d) * 100}%;width:{Math.max(((o.e - o.s) / d) * 100, 0.08)}%"
+            >
+              {#if editingId === o.id}
+                <input
+                  class="inline-sub-edit"
+                  bind:value={editDraft}
+                  use:focusOnMount
+                  onpointerdown={(ev) => ev.stopPropagation()}
+                  onkeydown={(ev) => {
+                    if (ev.key === 'Enter') {
+                      ev.preventDefault();
+                      commitInlineEdit(o);
+                    } else if (ev.key === 'Escape') {
+                      ev.preventDefault();
+                      cancelInlineEdit();
+                    }
+                  }}
+                  onblur={() => commitInlineEdit(o)}
+                />
+              {:else if blkPx >= 24}
+                <span class="sb-txt">{o.t}</span>
+              {/if}
+            </div>
+          {/each}
 
-        {#if showSubs}
-          <div class="trk sub-trk">
-            {#each visibleSubs as o (o.id)}
-              {@const blkPx = ((o.e - o.s) / d) * laneWidth}
-              <div
-                class="blk sb"
-                class:on={studio.sel === o.id || studio.act === o.id}
-                class:tiny={blkPx < 24}
-                class:wide={blkPx >= 150}
-                data-id={o.id}
-                data-tr="sb"
-                title={o.t}
-                style="left:{(o.s / d) * 100}%;width:{Math.max(((o.e - o.s) / d) * 100, 0.08)}%"
-              >
-                {#if editingId === o.id}
-                  <input
-                    class="inline-sub-edit"
-                    bind:value={editDraft}
-                    use:focusOnMount
-                    onpointerdown={(ev) => ev.stopPropagation()}
-                    onkeydown={(ev) => {
-                      if (ev.key === 'Enter') {
-                        ev.preventDefault();
-                        commitInlineEdit(o);
-                      } else if (ev.key === 'Escape') {
-                        ev.preventDefault();
-                        editingId = null;
-                      }
-                    }}
-                    onblur={() => commitInlineEdit(o)}
-                  />
-                {:else if blkPx >= 24}
-                  <span class="sb-txt">{o.t}</span>
-                {/if}
-              </div>
-            {/each}
+          {#each visibleMergePairs as mp (mp.key)}
+            <button
+              type="button"
+              class="merge-btn"
+              style="left:{mp.leftPct}%"
+              title={mp.gap > 0.12 ? `Merge subtitles (preserves ${mp.gap.toFixed(2)}s gap)` : 'Merge subtitles'}
+              aria-label="Merge adjacent subtitles"
+              onpointerdown={(e) => e.stopPropagation()}
+              onclick={(e) => {
+                e.stopPropagation();
+                studio.mergeSubByIds(mp.leftId, mp.rightId);
+              }}
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 5l3 3-3 3M14 5l-3 3 3 3M8 3v10" />
+              </svg>
+            </button>
+          {/each}
+        </div>
 
-            {#each visibleMergePairs as mp (mp.key)}
-              <button
-                type="button"
-                class="merge-btn"
-                style="left:{mp.leftPct}%"
-                title={mp.gap > 0.12 ? `Merge subtitles (preserves ${mp.gap.toFixed(2)}s gap)` : 'Merge subtitles'}
-                aria-label="Merge adjacent subtitles"
-                onpointerdown={(e) => e.stopPropagation()}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  studio.mergeSubByIds(mp.leftId, mp.rightId);
-                }}
-              >
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M2 5l3 3-3 3M14 5l-3 3 3 3M8 3v10" />
-                </svg>
-              </button>
-            {/each}
-          </div>
-        {/if}
+        <div class="trk">
+          {#each studio.mediaOverlays as o (o.id)}
+            <div
+              class="blk ov"
+              class:on={studio.selectedOverlayId === o.id}
+              data-id={o.id}
+              data-tr="ov"
+              style="left:{((o.start || 0) / d) * 100}%;width:{Math.max((((o.end || d) - (o.start || 0)) / d) * 100, 0.2)}%;{o.enabled === false ? 'opacity:0.4;filter:grayscale(0.6);' : ''}"
+            >
+              {o.name}
+            </div>
+          {/each}
+        </div>
 
-        {#if showLayers}
-          <div class="trk">
-            {#each studio.mediaOverlays as o (o.id)}
-              <div
-                class="blk ov"
-                class:on={studio.selectedOverlayId === o.id}
-                data-id={o.id}
-                data-tr="ov"
-                style="left:{((o.start || 0) / d) * 100}%;width:{Math.max((((o.end || d) - (o.start || 0)) / d) * 100, 0.2)}%;{o.enabled === false ? 'opacity:0.4;filter:grayscale(0.6);' : ''}"
-              >
-                {o.name}
-              </div>
-            {/each}
-          </div>
-
-          <div class="trk">
-            {#each studio.texts as o (o.id)}
-              <div
-                class="blk tx"
-                class:on={studio.sel === o.id}
-                data-id={o.id}
-                data-tr="tx"
-                style="left:{(o.s / d) * 100}%;width:{Math.max(((o.e - o.s) / d) * 100, 0.2)}%;{o.enabled === false ? 'opacity:0.4;filter:grayscale(0.6);' : ''}"
-              >
-                {o.t}
-              </div>
-            {/each}
-          </div>
-        {/if}
+        <div class="trk">
+          {#each studio.texts as o (o.id)}
+            <div
+              class="blk tx"
+              class:on={studio.sel === o.id}
+              data-id={o.id}
+              data-tr="tx"
+              style="left:{(o.s / d) * 100}%;width:{Math.max(((o.e - o.s) / d) * 100, 0.2)}%;{o.enabled === false ? 'opacity:0.4;filter:grayscale(0.6);' : ''}"
+            >
+              {o.t}
+            </div>
+          {/each}
+        </div>
 
         <div class="playhead" style="transform:translateX({phPx}px)"></div>
       </div>
@@ -792,20 +711,12 @@
     overflow: hidden;
     min-width: 0;
   }
-  .tl-dock.expanded {
-    position: fixed;
-    inset: 0;
-    z-index: 64;
-    padding-top: var(--sat);
-    padding-bottom: var(--sab);
-  }
   .tl-tools {
-    min-height: 34px;
-    padding: 4px 10px;
+    height: 34px;
+    padding: 0 12px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    gap: 8px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
@@ -819,10 +730,6 @@
     border: 1px solid var(--border-mid);
     margin-left: 2px;
   }
-  .trk-filter {
-    display: flex;
-    gap: 3px;
-  }
   .v-div {
     width: 1px;
     height: 14px;
@@ -832,8 +739,7 @@
     flex: 1;
     display: flex;
     min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden;
   }
   .tl-headers {
     width: 112px;
@@ -844,12 +750,9 @@
     flex-direction: column;
     padding-bottom: 6px;
   }
-  .tl-dock.compact .tl-headers {
-    width: 58px;
-  }
   .hdr-ruler {
     height: 22px;
-    padding: 0 8px;
+    padding: 0 10px;
     font-size: 11px;
     font-weight: 600;
     color: var(--accent);
@@ -860,25 +763,13 @@
   .hdr-row {
     height: 32px;
     margin-top: 3px;
-    padding: 0 8px;
+    padding: 0 10px;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     font-size: 11px;
     font-weight: 560;
     color: var(--text-secondary);
-  }
-  .tl-dock.compact .hdr-row {
-    height: 38px;
-    padding: 0 6px;
-    font-size: 10.5px;
-  }
-  .tl-dock.compact .trk {
-    height: 38px;
-  }
-  .tl-dock.compact .blk {
-    line-height: 30px;
-    font-size: 11.5px;
   }
   .trk-dot {
     width: 7px;
@@ -892,8 +783,6 @@
     overflow-y: hidden;
     min-width: 0;
     background: var(--bg-canvas);
-    touch-action: pan-x;
-    -webkit-overflow-scrolling: touch;
   }
   .lane {
     position: relative;
@@ -1000,22 +889,6 @@
   }
   .blk.ov { background: var(--tl-ov); }
   .blk.tx { background: var(--tl-txt); }
-  .wave-lane {
-    position: absolute;
-    inset: 3px 4px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    opacity: 0.72;
-    pointer-events: none;
-    overflow: hidden;
-  }
-  .wave-lane i {
-    flex: 1;
-    min-width: 1px;
-    background: var(--tl-audio);
-    border-radius: 1px;
-  }
   .blk.on {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
@@ -1031,20 +904,10 @@
     width: 6px;
     cursor: ew-resize;
   }
-  .blk.on::before,
-  .blk.on::after {
-    width: 10px;
-    background: rgba(255, 255, 255, 0.28);
-  }
-  @media (pointer: coarse) {
-    .blk::before,
-    .blk::after {
-      width: 16px;
-    }
-  }
   .blk::before { left: 0; }
   .blk::after { right: 0; }
 
+  /* One-Click Merge Button positioned cleanly between adjacent subtitle boundaries */
   .merge-btn {
     position: absolute;
     top: 50%;
@@ -1055,7 +918,7 @@
     min-height: 19px;
     padding: 0;
     border-radius: 99px;
-    background: #2563eb;
+    background: var(--accent);
     color: #ffffff;
     border: 1.5px solid var(--bg-canvas);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
@@ -1066,7 +929,7 @@
     transition: transform 110ms ease, background 110ms ease;
   }
   .merge-btn:hover {
-    background: #3b82f6;
+    background: var(--accent-hover);
     transform: translate(-50%, -50%) scale(1.16);
   }
   .merge-btn:active {

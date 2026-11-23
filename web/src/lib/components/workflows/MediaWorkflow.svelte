@@ -10,8 +10,9 @@
     recordTrimAdjustment,
     runSelfTrainingReflection,
   } from '../../aiClipTrainer.js';
-  import { importVideoFromUrl, openVideoFile, pickAndOpenVideo } from '../../mediaHelpers.js';
+  import { loadVideoPath, openVideoFile } from '../../mediaHelpers.js';
   import { fmt, studio } from '../../state.svelte.js';
+  import { getTauri } from '../../tauriBridge.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import Icon from '../Icon.svelte';
   import AssetsPanel from '../panels/AssetsPanel.svelte';
@@ -19,9 +20,11 @@
   let subTab = $state('import'); // 'import' | 'dl' | 'assets' | 'ai'
   let vidIn = $state(null);
 
-  // Direct CORS video URL import state
+  // Download state
   let dlUrl = $state('');
+  let dlFmt = $state('best');
   let dlBusy = $state(false);
+  let dlPct = $state(0);
   let dlStatus = $state('');
 
   // AI clips & Editorial Intelligence state
@@ -41,34 +44,47 @@
   }
 
   async function browseLocalVideo() {
-    try {
-      const ok = await pickAndOpenVideo();
-      if (!ok && vidIn) {
-        // pickAndOpenVideo already prompts fallback if cancelled/not available
+    const T = getTauri();
+    if (T?.dialog) {
+      try {
+        const p = await T.dialog.open({ filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] }] });
+        if (p) await loadVideoPath(p);
+      } catch (e) {
+        studio.toast(String(e));
       }
-    } catch (e) {
-      studio.toast(String(e));
+    } else {
+      vidIn?.click();
     }
   }
 
   async function downloadUrl() {
     if (!dlUrl.trim()) return;
+    const T = getTauri();
     dlBusy = true;
-    dlStatus = 'Fetching direct media URL in browser…';
+    dlPct = 0;
+    dlStatus = 'Downloading…';
+    const unlisten = await T.event?.listen('ytdlp-log', (e) => {
+      const m = /\[download\]\s+(\d+(?:\.\d+)?)%/.exec(String(e.payload || ''));
+      if (m) dlPct = +m[1];
+    });
     try {
-      await importVideoFromUrl(dlUrl.trim());
-      studio.meta = { ...studio.meta, link: dlUrl.trim() };
-      dlStatus = 'Loaded ✔';
+      const dir = await T.path.downloadDir();
+      const outPath = await T.core.invoke('ytdlp_download', { url: dlUrl.trim(), fmt: dlFmt, dir, start: '', end: '' });
+      dlStatus = 'Downloaded ✔ Opening…';
+      dlPct = 100;
+      studio.meta = { link: dlUrl.trim(), title: outPath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') };
+      await loadVideoPath(outPath);
     } catch (e) {
-      dlStatus = 'Error (CORS or unsupported URL): ' + (e?.message || e);
+      dlStatus = 'Error: ' + (e?.message || e);
     } finally {
+      unlisten?.();
       dlBusy = false;
     }
   }
 
   async function findViralClips() {
     if (!studio.subs.length) return studio.toast('Generate subtitles first (Captions tab).');
-    if (!studio.hasAiAccess()) {
+    if (!studio.API.key && studio.API.prov !== 'ollama') {
       studio.apiModalOpen = true;
       return;
     }
@@ -150,7 +166,7 @@
   }
 
   async function trainAiCoachNow() {
-    if (!studio.hasAiAccess()) {
+    if (!studio.API.key && studio.API.prov !== 'ollama') {
       studio.apiModalOpen = true;
       return;
     }
@@ -204,25 +220,23 @@
     </CategoryBlock>
   {/if}
 {:else if subTab === 'dl'}
-  <CategoryBlock title="Direct Video URL (Browser Import)" icon="download" open={true}>
-    <input bind:value={dlUrl} placeholder="https://example.com/clip.mp4 (CORS-enabled)" style="width:100%;margin-bottom:8px" />
-    <div class="bar">
-      <button type="button" class="pri sm" style="flex:1" disabled={dlBusy} onclick={downloadUrl}>
-        {dlBusy ? 'Fetching…' : 'Load Direct MP4/WebM URL'}
+  <CategoryBlock title="Download from URL (yt-dlp)" icon="download" open={true}>
+    <input bind:value={dlUrl} placeholder="Paste YouTube / Instagram / X link…" style="width:100%;margin-bottom:8px" />
+    <div class="rt">
+      <select bind:value={dlFmt} style="flex:1">
+        <option value="best">Best MP4</option>
+        <option value="1080">1080p MP4</option>
+        <option value="720">720p MP4</option>
+        <option value="audio">Audio MP3 only</option>
+      </select>
+      <button type="button" class="pri sm" disabled={dlBusy} onclick={downloadUrl}>
+        {dlBusy ? 'Downloading…' : 'Fetch Video'}
       </button>
     </div>
+    <div class="pbar"><i style="width:{dlPct}%"></i></div>
     {#if dlStatus}
-      <div class="hint" style="margin:6px 0 0">{dlStatus}</div>
+      <div class="hint" style="margin:2px 0 0">{dlStatus}</div>
     {/if}
-    <div class="sub-card" style="margin-top:10px">
-      <div class="rt" style="justify-content:space-between">
-        <b style="font-size:11.5px">YouTube / Social Extraction (yt-dlp)</b>
-        <span class="badge">Desktop Only</span>
-      </div>
-      <div class="hint" style="margin:4px 0 0">
-        Browsers &amp; Vercel serverless functions cannot execute <code>yt-dlp</code> directly. Download on the desktop app or import local MP4/WebM files directly in the Import tab.
-      </div>
-    </div>
   </CategoryBlock>
 {:else}
   <AssetsPanel />
@@ -230,27 +244,31 @@
 
 <style>
   .drop-card {
-    border: 1.5px dashed var(--border-strong);
-    border-radius: 14px;
-    padding: 22px 16px;
+    border: 1.5px dashed var(--border-mid);
+    border-radius: var(--radius-lg);
+    padding: 24px 16px;
     text-align: center;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-primary);
     cursor: pointer;
-    margin-bottom: 10px;
-    transition: border-color 160ms ease, background 160ms ease;
+    margin-bottom: 12px;
+    transition: all var(--dur-mid) ease;
   }
   .drop-card:hover {
-    border-color: var(--accent-primary);
-    background: var(--accent-primary-soft);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
   .drop-ic {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    background: var(--accent-primary-soft);
-    color: var(--accent-primary);
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
+    background: var(--accent-soft);
+    color: var(--accent);
     display: inline-grid;
     place-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    transition: transform var(--dur-fast) ease;
+  }
+  .drop-card:hover .drop-ic {
+    transform: scale(1.06);
   }
 </style>

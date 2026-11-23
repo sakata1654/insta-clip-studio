@@ -17,10 +17,16 @@
     studio.subs.find((s) => s.id === studio.sel) || null
   );
 
+  const subDur = $derived(selSub ? Math.max(0.05, Math.round((Number(selSub.e) - Number(selSub.s)) * 100) / 100) : 0);
+  const subWords = $derived(selSub ? (selSub.t || '').trim().split(/\s+/).filter(Boolean).length : 0);
+  const subCps = $derived(selSub && subDur > 0 ? Math.round(((selSub.t || '').trim().length / subDur) * 10) / 10 : 0);
+  const cpsStatus = $derived(subCps <= 17 ? 'ok' : subCps <= 23 ? 'warn' : 'err');
+  const cpsLabel = $derived(subCps <= 17 ? 'Optimal' : subCps <= 23 ? 'Fast' : 'Too Fast');
+
   const contextLabel = $derived.by(() => {
     if (selOverlay && !selText) return `Overlay: ${selOverlay.name}`;
     if (selText) return 'Text Layer Properties';
-    if (selSub) return 'Subtitle Cue Properties';
+    if (selSub) return `Cue #${studio.subs.indexOf(selSub) + 1}`;
     return 'Clip Inspector';
   });
 
@@ -42,6 +48,16 @@
     });
     studio.inv();
     studio.snap();
+  }
+
+  function splitAtCurrentPlayhead() {
+    if (!selSub) return;
+    const ph = studio.currentPlayhead();
+    if (ph > selSub.s + 0.15 && ph < selSub.e - 0.15) {
+      studio.splitSelectedAtPlayhead();
+    } else {
+      studio.toast('Move playhead inside cue timestamps to split');
+    }
   }
 </script>
 
@@ -139,31 +155,51 @@
       {#if selSub}
         {@const subIdx = studio.subs.indexOf(selSub)}
         <CategoryBlock title="Selected Cue #{subIdx + 1}" icon="subtitles" open={true}>
-          <div class="sg" style="margin-bottom:6px">
-            <label>Start (s)<input type="number" step="0.05" bind:value={selSub.s} oninput={() => studio.inv()} /></label>
-            <label>End (s)<input type="number" step="0.05" bind:value={selSub.e} oninput={() => studio.inv()} /></label>
+          <!-- Reading Speed & Duration Badge Strip -->
+          <div class="rt" style="justify-content:space-between;margin-bottom:8px">
+            <span class="badge mono">{subDur.toFixed(2)}s · {subWords} words</span>
+            {#if (selSub.t || '').trim().length > 0}
+              <span class="cps-badge {cpsStatus}" title="Reading Speed: {subCps} characters per second">
+                {subCps} CPS · {cpsLabel}
+              </span>
+            {/if}
           </div>
-          <label class="hint" for="insp-sub-txt" style="margin:2px 0">Subtitle Text</label>
+
+          <div class="sg" style="margin-bottom:8px">
+            <label>Start (s)<input type="number" step="0.05" min="0" bind:value={selSub.s} oninput={() => studio.inv()} /></label>
+            <label>End (s)<input type="number" step="0.05" min="0" bind:value={selSub.e} oninput={() => studio.inv()} /></label>
+          </div>
+
+          <label class="hint" for="insp-sub-txt" style="margin:4px 0 2px;display:flex;justify-content:space-between">
+            <span>Subtitle Text</span>
+            <span class="mono" style="font-size:10.5px">{(selSub.t || '').length} chars</span>
+          </label>
           <textarea
             id="insp-sub-txt"
             dir="auto"
             rows="2"
-            style="width:100%"
+            style="width:100%;font-size:13px;line-height:1.5"
             value={selSub.t}
+            placeholder="Type or paste subtitle text…"
             oninput={(e) => {
               selSub.t = e.currentTarget.value;
               studio.inv();
             }}
             onblur={() => studio.expandPipeSubtitles()}
           ></textarea>
+
           {#if selSub.tr !== undefined || studio.du.on}
-            <label class="hint" for="insp-sub-tr" style="margin:6px 0 2px;display:block">Translation Line</label>
+            <label class="hint" for="insp-sub-tr" style="margin:8px 0 2px;display:flex;justify-content:space-between">
+              <span>Translation Line</span>
+              <span class="mono" style="font-size:10.5px">{(selSub.tr || '').length} chars</span>
+            </label>
             <textarea
               id="insp-sub-tr"
               dir="auto"
               rows="2"
-              style="width:100%"
+              style="width:100%;font-size:12.5px;line-height:1.5"
               value={selSub.tr || ''}
+              placeholder="Translation in English, Urdu or secondary language…"
               oninput={(e) => {
                 selSub.tr = e.currentTarget.value;
                 studio.inv();
@@ -171,15 +207,25 @@
               onblur={() => studio.expandPipeSubtitles()}
             ></textarea>
           {/if}
-          <div class="bar" style="margin-top:8px;margin-bottom:0">
+
+          <!-- Word-by-Word Transfer & Merge Actions -->
+          <div class="bar" style="margin-top:10px;margin-bottom:4px">
             {#if (selSub.t || '').includes('|') || (selSub.tr || '').includes('|')}
               <button type="button" class="xs pri" onclick={() => studio.expandPipeSubtitles()} title="Divide this cue at | separator">Split on |</button>
             {/if}
             {#if subIdx < studio.subs.length - 1}
-              <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'prev')}>Pull Word</button>
-              <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'next')}>Push Word</button>
-              <button type="button" class="xs" onclick={() => studio.mergeSubAt(subIdx)}>Merge Next</button>
+              <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'prev')} title="Move last word of previous cue to this cue">Pull Word</button>
+              <button type="button" class="xs" onclick={() => studio.transferWord(subIdx, 'next')} title="Move last word of this cue to next cue">Push Word</button>
+              <button type="button" class="xs" onclick={() => studio.mergeSubAt(subIdx)} title="Merge this cue with next cue">Merge Next</button>
             {/if}
+            <button
+              type="button"
+              class="xs"
+              onclick={splitAtCurrentPlayhead}
+              title="Split this cue into two at the current playhead time"
+            >
+              Split at Playhead
+            </button>
             <button
               type="button"
               class="xs ghost"
@@ -191,7 +237,7 @@
               }}
               title="Clear text in this cue"
             >
-              Clear Text
+              Clear
             </button>
             <button
               type="button"
@@ -203,16 +249,19 @@
                 studio.inv();
                 studio.snap();
               }}
+              title="Delete cue"
             >
-              Delete
+              <Icon name="trash" size={11} />
+              <span>Delete</span>
             </button>
           </div>
+
           <button
             type="button"
-            class="xs"
-            style="width:100%;margin-top:8px"
+            class="xs ghost"
+            style="width:100%;margin-top:8px;border:1px solid var(--border-color);justify-content:center"
             onclick={() => {
-              studio.leftTab = 'subtitles';
+              studio.leftTab = 'look';
               studio.subTab = 'style';
             }}
           >
@@ -222,7 +271,7 @@
       {/if}
 
       {#if !selOverlay && !selText && !selSub}
-        <CategoryBlock title="Active Clip Summary" icon="film" open={true}>
+        <CategoryBlock title="Active Project Summary" icon="film" open={true}>
           <div class="rt" style="justify-content:space-between;margin-bottom:6px">
             <span class="hint" style="margin:0">Aspect Ratio</span>
             <span class="badge mono">{studio.aspect}</span>
@@ -231,9 +280,13 @@
             <span class="hint" style="margin:0">Trim Range</span>
             <span class="badge mono">{fmt(studio.trimS)} → {fmt(studio.trimE)}</span>
           </div>
+          <div class="rt" style="justify-content:space-between;margin-bottom:6px">
+            <span class="hint" style="margin:0">Subtitle Cues</span>
+            <span class="badge mono">{studio.subs.length} total</span>
+          </div>
           <StyleFieldRow label="Video Volume" value={studio.au?.vid ?? 100} min={0} max={200} unit="%" onchange={(v) => ((studio.au.vid = v), studio.syncVidVol?.())} />
           <div class="hint" style="margin:8px 0 0">
-            Select any subtitle cue, title overlay, or media layer in the preview or timeline to edit its properties here.
+            Click any subtitle cue, overlay, or title in the preview or timeline to inspect and edit its properties.
           </div>
         </CategoryBlock>
 

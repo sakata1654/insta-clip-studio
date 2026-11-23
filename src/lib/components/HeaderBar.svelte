@@ -1,11 +1,9 @@
 <script>
   import { exportAll, saveBlob } from '../renderer.js';
   import { studio } from '../state.svelte.js';
-  import { isDevPreviewBridge } from '../tauriBridge.js';
   import Icon from './Icon.svelte';
 
   let { onOpenProjects = () => {}, onOpenSettings = () => {} } = $props();
-  const isDev = isDevPreviewBridge();
   let jobsOpen = $state(false);
   const runningJobs = $derived(studio.exportJobs.filter((j) => !j.done));
   const latestJob = $derived(runningJobs[0] || studio.exportJobs[0] || null);
@@ -16,115 +14,170 @@
       : 0
   );
 
-  function saveToLibrary() {
-    studio.saveProjectStore();
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try {
+      localStorage.icsTheme = next;
+    } catch {}
   }
 
-  function exportProjectJson() {
-    studio.saveProjectStore({ quiet: true });
-    saveBlob(
-      new Blob(
-        [
-          JSON.stringify(
-            {
-              schema: 'insta-clip-studio-project',
-              version: 2,
-              projectName: studio.projectName || 'Untitled Project',
-              savedAt: new Date().toISOString(),
-              state: studio.projJson(),
-            },
-            null,
-            2
-          ),
-        ],
-        { type: 'application/json' }
-      ),
-      ((studio.projectName || 'project').replace(/[^a-z0-9-_]+/gi, '_')) + '.icproj.json'
-    );
-    studio.toast('Exported portable project (.icproj.json)');
+  function saveToLibrary() {
+    studio.saveProjectStore();
   }
 </script>
 
 <header class="top-bar">
+  <!-- Left: Branding & Project Meta -->
   <div class="bar-left">
     <button
       type="button"
-      class="sm ghost"
+      class="sm ghost nav-home-btn"
       onclick={() => (studio.homeOpen = true)}
-      title="Back to Project Homepage"
+      title="Back to Projects Dashboard"
     >
       <Icon name="home" size={14} />
-      <span>Home</span>
+      <span class="btn-lbl">Dashboard</span>
     </button>
 
     <div class="brand">
       <div class="logo-mark">
         <img src="/app-icon.png" alt="Tibyan Studio" class="brand-pfp" />
       </div>
-      <span class="app-title">Tibyan Studio</span>
-      {#if isDev}
-        <span class="env-pill">Preview</span>
+      <span class="app-title">Tibyan</span>
+    </div>
+
+    <span class="v-div"></span>
+
+    <div class="proj-name-wrap">
+      <input
+        class="proj-pill"
+        bind:value={studio.projectName}
+        placeholder="Untitled Project"
+        aria-label="Project name"
+      />
+      <span
+        class="save-state"
+        class:unsaved={studio.unsaved}
+        title={studio.unsaved ? 'Unsaved changes (Ctrl+S)' : 'All changes saved to library'}
+      >
+        <i class="sdot"></i>
+        <span>{studio.unsaved ? 'Unsaved' : 'Saved'}</span>
+      </span>
+    </div>
+
+    <button
+      type="button"
+      class="sm ghost"
+      onclick={onOpenProjects}
+      title="Browse & Manage Saved Projects"
+    >
+      <Icon name="folder" size={13} />
+      <span class="btn-lbl">Projects</span>
+    </button>
+  </div>
+
+  <!-- Center: 5-Stage Production Workflow (Inspired by Minbar & Quran Caption) -->
+  <nav class="workflow-nav" aria-label="Production stages">
+    <button
+      type="button"
+      class="wf-step"
+      class:active={studio.nav === 'ed' && (studio.leftTab === 'media' || studio.leftTab === 'banners' || studio.leftTab === 'audio')}
+      onclick={() => { studio.nav = 'ed'; studio.leftTab = 'media'; }}
+      title="Step 1: Video & Audio Media Assets"
+    >
+      <span class="wf-num">1</span>
+      <span class="wf-lbl">Media</span>
+    </button>
+
+    <button
+      type="button"
+      class="wf-step"
+      class:active={studio.nav === 'ed' && studio.leftTab === 'subtitles'}
+      onclick={() => { studio.nav = 'ed'; studio.leftTab = 'subtitles'; }}
+      title="Step 2: AI Speech Transcription & Qur'an Snapping"
+    >
+      <span class="wf-num">2</span>
+      <span class="wf-lbl">Transcription</span>
+      {#if studio.subs.length}
+        <span class="wf-badge">{studio.subs.length}</span>
       {/if}
-    </div>
-
-    <span class="v-div"></span>
-
-    <input
-      class="proj-pill"
-      bind:value={studio.projectName}
-      placeholder="Untitled Project"
-      aria-label="Project name"
-    />
-    <span class="save-state" class:unsaved={studio.unsaved} title={studio.unsaved ? 'Unsaved changes (Ctrl+S)' : 'Saved to library'}>
-      <i class="sdot"></i>
-      <span>{studio.unsaved ? 'Unsaved' : 'Saved'}</span>
-    </span>
-    <button type="button" class="sm ghost" onclick={onOpenProjects} title="Browse & Manage Projects">
-      <Icon name="folder" size={14} />
-      <span>Projects</span>
     </button>
-  </div>
 
-  <div class="bar-center">
-    <div class="mode-toggle" role="tablist" aria-label="Workspace view">
-      <button type="button" class:on={studio.nav !== 'tr' && studio.nav !== 'ai'} onclick={() => (studio.nav = 'ed')}>
-        <Icon name="sliders" size={12} />
-        <span>Timeline Editor</span>
-      </button>
-      <button type="button" class:on={studio.nav === 'tr'} onclick={() => (studio.nav = 'tr')}>
-        <Icon name="languages" size={12} />
-        <span>Transcript Studio</span>
-      </button>
-      <button type="button" class:on={studio.nav === 'ai'} onclick={() => (studio.nav = 'ai')}>
-        <Icon name="sparkles" size={12} />
-        <span>AI Clips</span>
-      </button>
-    </div>
-  </div>
+    <button
+      type="button"
+      class="wf-step"
+      class:active={studio.nav === 'tr'}
+      onclick={() => (studio.nav = 'tr')}
+      title="Step 3: Translation Desk & 21 House Rules Review"
+    >
+      <span class="wf-num">3</span>
+      <span class="wf-lbl">Translations</span>
+      {#if (studio.compareFlags && studio.compareFlags.length) || (studio.quranFlags && studio.quranFlags.length)}
+        <span class="wf-flag-dot" title="Review items waiting"></span>
+      {/if}
+    </button>
 
+    <button
+      type="button"
+      class="wf-step"
+      class:active={studio.nav === 'ed' && studio.leftTab === 'look'}
+      onclick={() => { studio.nav = 'ed'; studio.leftTab = 'look'; }}
+      title="Step 4: Multi-Target Styling & Presets"
+    >
+      <span class="wf-num">4</span>
+      <span class="wf-lbl">Style</span>
+    </button>
+
+    <button
+      type="button"
+      class="wf-step"
+      class:active={studio.exportModalOpen}
+      onclick={() => (studio.exportModalOpen = true)}
+      title="Step 5: Render Video & Social Captions"
+    >
+      <span class="wf-num">5</span>
+      <span class="wf-lbl">Export</span>
+    </button>
+  </nav>
+
+  <!-- Right: Utilities, Undo/Redo, Settings & Primary Export -->
   <div class="bar-right">
-    <button
-      type="button"
-      class="sm ghost icon-btn"
-      disabled={studio.histIdx <= 0}
-      onclick={() => studio.goHist(-1)}
-      title="Undo (Ctrl+Z)"
-      aria-label="Undo"
-    >
-      <Icon name="undo" size={14} />
-    </button>
-    <button
-      type="button"
-      class="sm ghost icon-btn"
-      disabled={studio.histIdx >= studio.histLen - 1}
-      onclick={() => studio.goHist(1)}
-      title="Redo (Ctrl+Shift+Z)"
-      aria-label="Redo"
-    >
-      <Icon name="redo" size={14} />
-    </button>
+    <div class="hist-group">
+      <button
+        type="button"
+        class="sm ghost icon-btn"
+        disabled={studio.histIdx <= 0}
+        onclick={() => studio.goHist(-1)}
+        title="Undo (Ctrl+Z)"
+        aria-label="Undo"
+      >
+        <Icon name="undo" size={13} />
+      </button>
+      <button
+        type="button"
+        class="sm ghost icon-btn"
+        disabled={studio.histIdx >= studio.histLen - 1}
+        onclick={() => studio.goHist(1)}
+        title="Redo (Ctrl+Shift+Z)"
+        aria-label="Redo"
+      >
+        <Icon name="redo" size={13} />
+      </button>
+    </div>
 
     <span class="v-div"></span>
+
+    <button
+      type="button"
+      class="sm ghost icon-btn"
+      onclick={toggleTheme}
+      title="Toggle Light / Dark Theme"
+      aria-label="Toggle Theme"
+    >
+      <Icon name="sun" size={14} />
+    </button>
 
     <button
       type="button"
@@ -139,12 +192,7 @@
 
     <button type="button" class="sm" onclick={saveToLibrary} title="Save Project (Ctrl+S)">
       <Icon name="save" size={13} />
-      <span>Save</span>
-    </button>
-
-    <button type="button" class="sm pri" onclick={() => (studio.exportModalOpen = true)} title="Export Video & Social Caption">
-      <Icon name="upload" size={13} />
-      <span>Export</span>
+      <span class="btn-lbl">Save</span>
     </button>
 
     {#if studio.exportJobs.length}
@@ -154,14 +202,14 @@
           class="sm jobs-pill"
           class:active={runningJobs.length > 0}
           onclick={() => (jobsOpen = !jobsOpen)}
-          title="Background exports"
+          title="Background exports queue"
         >
           {#if runningJobs.length}
             <span class="pulse-dot"></span>
-            <span>Rendering {latestJob?.pct ?? 0}%</span>
+            <span>{latestJob?.pct ?? 0}%</span>
           {:else}
             <Icon name="check" size={12} />
-            <span>Exports ({studio.exportJobs.length})</span>
+            <span>Exports</span>
           {/if}
         </button>
 
@@ -178,15 +226,8 @@
                 <div class="rt" style="justify-content:space-between;gap:6px">
                   <b style="font-size:11.8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{j.name}</b>
                   <span class="badge" class:ok={j.done && !j.error} class:err={j.error} class:pri={!j.done}>
-                    {j.done ? (j.error ? 'Failed' : 'Saved') : `${j.pct}%`}
+                    {j.done ? (j.error ? 'Failed' : 'Completed') : `${j.pct ?? 0}%`}
                   </span>
-                </div>
-                <div class="pbar" style="margin:5px 0"><i style="width:{j.pct}%"></i></div>
-                <div class="rt" style="justify-content:space-between">
-                  <span class="hint" style="margin:0;font-size:10.5px">{j.label}</span>
-                  {#if !j.done && j.cancel}
-                    <button type="button" class="xs danger" onclick={() => j.cancel()}>Cancel</button>
-                  {/if}
                 </div>
               </div>
             {/each}
@@ -195,9 +236,14 @@
       </div>
     {/if}
 
-    <button type="button" class="sm pri" onclick={() => exportAll()} title="Start background MP4 export">
+    <button
+      type="button"
+      class="sm pri export-action-btn"
+      onclick={() => (studio.exportModalOpen = true)}
+      title="Export Video (MP4 / WebM)"
+    >
       <Icon name="upload" size={13} />
-      <span>Export MP4</span>
+      <span>Export</span>
     </button>
   </div>
 </header>
@@ -205,15 +251,15 @@
 <style>
   .top-bar {
     grid-area: h;
-    height: 46px;
+    height: 48px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    padding: 0 12px;
+    gap: 12px;
+    padding: 0 14px;
     background: var(--bg-titlebar);
     border-bottom: 1px solid var(--border-color);
-    z-index: 20;
+    z-index: 25;
     min-width: 0;
   }
 
@@ -221,8 +267,9 @@
   .bar-right {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     min-width: 0;
+    flex-shrink: 0;
   }
 
   .brand {
@@ -236,7 +283,7 @@
     width: 24px;
     height: 24px;
     border-radius: var(--radius-sm);
-    background: #414127;
+    background: #1e3a2b;
     overflow: hidden;
     display: grid;
     place-items: center;
@@ -251,59 +298,56 @@
   }
 
   .app-title {
-    font-weight: 650;
-    font-size: 13px;
+    font-weight: 700;
+    font-size: 13.5px;
     letter-spacing: -0.02em;
+    color: var(--text-primary);
     white-space: nowrap;
-  }
-
-  .env-pill {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 99px;
-    background: var(--accent-soft);
-    color: var(--accent);
-    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   }
 
   .v-div {
     width: 1px;
     height: 16px;
     background: var(--border-color);
-    margin: 0 3px;
+    margin: 0 2px;
     flex-shrink: 0;
+  }
+
+  .proj-name-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
   }
 
   .proj-pill {
     background: transparent;
-    border-color: transparent;
-    padding: 4px 8px;
-    width: 150px;
-    font-size: 12.2px;
-    font-weight: 600;
-    border-radius: var(--radius-sm);
+    border: none;
+    padding: 2px 4px;
+    width: 130px;
+    font-size: 12px;
+    font-weight: 550;
+    color: var(--text-primary);
   }
-  .proj-pill:hover,
   .proj-pill:focus {
-    border-color: var(--border-mid);
-    background: var(--bg-input);
+    box-shadow: none;
   }
 
   .save-state {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
+    gap: 4px;
+    font-size: 10.5px;
     color: var(--text-thirdly);
-    padding: 2px 8px;
+    padding: 1px 5px;
     border-radius: 99px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
   }
   .sdot {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     background: var(--accent-green);
   }
@@ -311,32 +355,80 @@
     background: var(--accent-amber);
   }
 
-  .mode-toggle {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2px;
+  /* ─── 5-Step Workflow Nav ────────────────────────────────────────── */
+  .workflow-nav {
+    display: flex;
+    align-items: center;
+    gap: 3px;
     background: var(--bg-input);
-    padding: 2px;
+    padding: 3px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
   }
-  .mode-toggle button {
-    border: 0;
+
+  .wf-step {
+    border: 1px solid transparent;
     background: transparent;
-    padding: 4px 11px;
+    padding: 5px 12px;
     border-radius: var(--radius-sm);
-    color: var(--text-thirdly);
-    font-size: 11.5px;
-    font-weight: 560;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 550;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all var(--dur-fast) ease;
   }
-  .mode-toggle button:hover {
+
+  .wf-step:hover {
     color: var(--text-primary);
     background: var(--bg-hover);
   }
-  .mode-toggle button.on {
+
+  .wf-step.active {
     background: var(--bg-elevated);
     color: var(--text-primary);
+    border-color: var(--border-mid);
+    font-weight: 600;
     box-shadow: var(--shadow-sm);
+  }
+
+  .wf-num {
+    display: inline-grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-hover);
+    color: var(--text-thirdly);
+    font-size: 10px;
+    font-weight: 650;
+  }
+  .wf-step.active .wf-num {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .wf-badge {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 99px;
+  }
+
+  .wf-flag-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-amber);
+  }
+
+  .hist-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
 
   .icon-btn {
@@ -363,8 +455,8 @@
     color: var(--accent);
   }
   .pulse-dot {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--accent);
     animation: pulse 1.2s ease-in-out infinite;
@@ -377,8 +469,8 @@
     position: absolute;
     right: 0;
     top: calc(100% + 8px);
-    width: 310px;
-    max-height: 380px;
+    width: 290px;
+    max-height: 360px;
     overflow-y: auto;
     background: var(--bg-secondary);
     border: 1px solid var(--border-mid);
@@ -388,12 +480,15 @@
     z-index: 60;
   }
 
-  @media (max-width: 1080px) {
-    .proj-pill {
-      width: 110px;
-    }
-    .env-pill {
-      display: none;
-    }
+  @media (max-width: 1024px) {
+    .proj-pill { width: 90px; }
+    .btn-lbl { display: none; }
+    .wf-step { padding: 4px 8px; }
+  }
+
+  @media (max-width: 768px) {
+    .brand, .proj-name-wrap, .hist-group { display: none; }
+    .wf-lbl { display: none; }
+    .wf-step { padding: 5px 8px; }
   }
 </style>

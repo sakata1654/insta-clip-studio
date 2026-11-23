@@ -244,27 +244,31 @@
 
 <style>
   .drop-card {
-    border: 1.5px dashed var(--border-strong);
-    border-radius: 14px;
-    padding: 22px 16px;
+    border: 1.5px dashed var(--border-mid);
+    border-radius: var(--radius-lg);
+    padding: 24px 16px;
     text-align: center;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-primary);
     cursor: pointer;
-    margin-bottom: 10px;
-    transition: border-color 160ms ease, background 160ms ease;
+    margin-bottom: 12px;
+    transition: all var(--dur-mid) ease;
   }
   .drop-card:hover {
-    border-color: var(--accent-primary);
-    background: var(--accent-primary-soft);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
   .drop-ic {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    background: var(--accent-primary-soft);
-    color: var(--accent-primary);
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
+    background: var(--accent-soft);
+    color: var(--accent);
     display: inline-grid;
     place-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    transition: transform var(--dur-fast) ease;
+  }
+  .drop-card:hover .drop-ic {
+    transform: scale(1.06);
   }
 </style>

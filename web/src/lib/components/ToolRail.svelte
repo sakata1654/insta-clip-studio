@@ -4,67 +4,70 @@
   let { active = $bindable('media') } = $props();
 
   const rails = [
-    { id: 'media', label: 'Media', icon: 'media', tip: 'Import video, project assets & picture-in-picture overlays' },
-    { id: 'subtitles', label: 'Subtitles', icon: 'subtitles', tip: 'Generate, edit, style & translate subtitles' },
-    { id: 'banners', label: 'Titles', icon: 'type', tip: 'Floating text, speaker badge, watermark & news ticker' },
-    { id: 'look', label: 'Canvas', icon: 'layout', tip: 'Aspect ratio, studio framing, color grade & camera cuts' },
-    { id: 'audio', label: 'Audio', icon: 'music', tip: 'Audio mix, background music track & volume levels' },
-    { id: 'ai', label: 'AI Tools', icon: 'sparkles', tip: 'AI Lecture-to-Reels, smart segmentation & editorial coach' },
+    { id: 'media', label: 'Media', icon: 'media', tip: 'Media files, video transform, canvas & overlays' },
+    { id: 'subtitles', label: 'Captions', icon: 'subtitles', tip: 'AI Speech transcription, Qur’an snapping & subtitle slicer' },
+    { id: 'look', label: 'Style', icon: 'sparkles', tip: 'Multi-target styling, Quran typography & preset library' },
+    { id: 'banners', label: 'Titles', icon: 'type', tip: 'Speaker cards, lower thirds, watermarks & floating text' },
+    { id: 'audio', label: 'Audio', icon: 'music', tip: 'Audio enhancement, vocal isolation & background mix' },
+    { id: 'ai', label: 'AI Tools', icon: 'sparkles', tip: 'Lecture-to-Reels clip generation & viral hook detector' },
   ];
 </script>
 
-<nav class="tool-rail" aria-label="Workspace sections">
-  <div class="rail-caption">TOOLS</div>
-  {#each rails as r}
-    <button
-      type="button"
-      class="rail-btn"
-      class:on={active === r.id}
-      title={r.tip}
-      onclick={() => (active = r.id)}
-    >
-      <span class="rail-ic"><Icon name={r.icon} size={15} /></span>
-      <span class="rail-lbl">{r.label}</span>
-    </button>
-  {/each}
+<nav class="tool-rail" aria-label="Workspace tool rail">
+  <div class="rail-items">
+    {#each rails as r}
+      <button
+        type="button"
+        class="rail-btn"
+        class:on={active === r.id}
+        title={r.tip}
+        aria-label={r.label}
+        onclick={() => (active = r.id)}
+      >
+        <span class="rail-ic"><Icon name={r.icon} size={16} /></span>
+        <span class="rail-lbl">{r.label}</span>
+      </button>
+    {/each}
+  </div>
 </nav>
 
 <style>
   .tool-rail {
     grid-area: r;
-    width: 136px;
+    width: 64px;
     background: var(--bg-rail);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
-    padding: 10px 8px;
-    gap: 4px;
-    overflow-y: auto;
+    align-items: center;
+    padding: 8px 4px;
+    user-select: none;
+    z-index: 10;
   }
 
-  .rail-caption {
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    padding: 2px 8px 6px;
+  .rail-items {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
   }
 
   .rail-btn {
     width: 100%;
-    height: 38px;
+    height: 48px;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
     background: transparent;
     color: var(--text-secondary);
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: flex-start;
-    gap: 9px;
-    padding: 0 9px;
-    position: relative;
-    font-size: 12px;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px 2px;
+    font-size: 10px;
     font-weight: 550;
+    transition: all var(--dur-fast) ease;
   }
 
   .rail-btn:hover {
@@ -75,31 +78,25 @@
   .rail-btn.on {
     color: var(--accent);
     background: var(--accent-soft);
-    border-color: color-mix(in srgb, var(--accent) 26%, transparent);
-    font-weight: 620;
-  }
-
-  .rail-btn.on::before {
-    content: '';
-    position: absolute;
-    left: -8px;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    border-radius: 0 3px 3px 0;
-    background: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    font-weight: 600;
   }
 
   .rail-ic {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
   }
 
   .rail-lbl {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 9.5px;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+
+  @media (max-width: 768px) {
+    .tool-rail {
+      display: none;
+    }
   }
 </style>

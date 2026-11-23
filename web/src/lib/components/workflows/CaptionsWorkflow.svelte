@@ -1,6 +1,6 @@
 <script>
   import { getCachedAsr, makeAsrCacheKey, setCachedAsr } from '../../asrCache.js';
-  import { transcriptionDuration, transcriptionFile } from '../../mediaHelpers.js';
+  import { transcriptionDuration, transcriptionPath } from '../../mediaHelpers.js';
   import {
     aiCallJson,
     aiProofreadAsr,
@@ -13,34 +13,29 @@
   } from '../../prompts.js';
   import { saveBlob } from '../../renderer.js';
   import { fvtt, fts, studio } from '../../state.svelte.js';
+  import { getTauri } from '../../tauriBridge.js';
   import { shapeBidiText } from '../../bidiHelper.js';
   import { DEFAULT_ISLAMIC_GLOSSARY, formatGlossaryPrompt, validateSubtitleCues } from '../../transcriptEngine/transcriptModel.js';
   import { TranscriptionPipeline } from '../../transcriptEngine/transcriptionEngine.js';
-  import { transcribeMediaWeb } from '../../webPlatform/webAiClient.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import Icon from '../Icon.svelte';
   import StyleWorkflow from './StyleWorkflow.svelte';
 
   let showAdvAsr = $state(false);
 
-  // Web Cloud ASR state
-  let eng = $state(
-    typeof localStorage !== 'undefined' && ['groq', 'elevenlabs', 'openai'].includes(localStorage.icsAsrEngine)
-      ? localStorage.icsAsrEngine
-      : 'groq'
-  );
-  let groqModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsGroqAsrModel') || 'whisper-large-v3' : 'whisper-large-v3');
+  // Transcription state
+  let eng = $state(typeof localStorage !== 'undefined' ? localStorage.icsAsrEngine || 'groq' : 'groq');
   let elModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsElModel') || 'scribe_v2' : 'scribe_v2');
-  let groqKey = $state(studio.ovrGet().groq_key || '');
+  let groqModel = $state(typeof localStorage !== 'undefined' ? localStorage.getItem('icsGroqAsrModel') || 'whisper-large-v3' : 'whisper-large-v3');
   let elKey = $state(studio.ovrGet().elevenlabs_key || '');
-  let oaAsrKey = $state(studio.ovrGet().openai_key || '');
+  let groqKey = $state(studio.ovrGet().groq_key || '');
   let elDiarize = $state(false);
   let elTags = $state(false);
   let elStatus = $state('');
 
   let lang = $state('ur');
   let genre = $state('speech');
-  let whisperModel = $state('whisper-1');
+  let whisperModel = $state('auto');
   let hints = $state('');
   let busy = $state(false);
   let pct = $state(0);
@@ -66,6 +61,33 @@
       : studio.subs
   );
 
+  $effect(() => {
+    const T = getTauri();
+    if (!T?.event) return;
+    let unlisten;
+    T.event.listen('whisper-log', (e) => {
+      const p = String(e.payload || '');
+      const x = /extract-progress=(\d+)%/.exec(p);
+      const m = /progress\s*=\s*(\d+)%/.exec(p);
+      if (x) {
+        pct = +x[1];
+        status = `Extracting audio… ${x[1]}%`;
+      } else if (p.startsWith('phase=uploading-elevenlabs')) {
+        pct = 65;
+        status = `Transcribing with ElevenLabs (${p.split(':')[1] || elModel})…`;
+      } else if (p.startsWith('phase=uploading-groq:')) {
+        const part = p.split(':')[1] || '1/1';
+        const [ci, ct] = part.split('/').map(Number);
+        pct = ct ? 25 + Math.round(((ci - 0.5) / ct) * 70) : 65;
+        status = `Transcribing with Groq Whisper Large V3 (chunk ${part})…`;
+      } else if (m) {
+        pct = +m[1];
+        status = `Transcribing… ${m[1]}%`;
+      }
+    }).then((u) => (unlisten = u));
+    return () => unlisten?.();
+  });
+
   function setEngine(v) {
     eng = v;
     try {
@@ -73,41 +95,41 @@
     } catch {}
   }
 
-  function saveElKey() {
+  async function saveAsrKeys() {
     const o = studio.ovrGet();
-    o.groq_key = groqKey.trim();
     o.elevenlabs_key = elKey.trim();
-    o.openai_key = oaAsrKey.trim();
+    o.groq_key = groqKey.trim();
     localStorage.icsOvr = JSON.stringify(o);
-    elStatus = o.groq_key || o.elevenlabs_key || o.openai_key ? 'Saved in browser session ✔' : 'Cleared optional override';
+    await getTauri().core.invoke('set_overrides', { map: o });
+    elStatus = (eng === 'groq' ? o.groq_key : o.elevenlabs_key) ? 'Saved ✔' : 'Cleared';
   }
 
   async function generateSubs() {
-    const mediaFile = await transcriptionFile();
-    if (!mediaFile) return studio.toast('Import a video or audio file first.');
-    const activeEng = ['groq', 'openai', 'elevenlabs'].includes(eng) ? eng : 'groq';
-    const activeModel = activeEng === 'groq' ? groqModel : activeEng === 'elevenlabs' ? elModel : whisperModel;
-    const userKey =
-      activeEng === 'groq'
-        ? groqKey.trim() || studio.ovrGet().groq_key || ''
-        : activeEng === 'elevenlabs'
-          ? elKey.trim() || studio.ovrGet().elevenlabs_key || ''
-          : oaAsrKey.trim() || studio.ovrGet().openai_key || '';
-    if (!userKey && !studio.serverHealth?.providers?.[activeEng]) {
-      elStatus = `No server ${activeEng} key detected — add your API key below or configure Vercel env var.`;
-      return studio.toast('Configure API key for transcription first.');
-    }
-
+    if (!studio.file && !studio.aud.track) return studio.toast('Import a video or audio file first.');
+    const T = getTauri();
     busy = true;
     pct = 0;
     try {
+      const routed = eng === 'auto' ? 'faster' : eng;
+      const model = routed === 'groq' ? groqModel : routed === 'elevenlabs' ? elModel : whisperModel;
+      const key =
+        routed === 'groq'
+          ? groqKey.trim() || studio.ovrGet().groq_key || ''
+          : routed === 'elevenlabs'
+            ? elKey.trim() || studio.ovrGet().elevenlabs_key || ''
+            : '';
+      if (routed === 'groq' && !key) throw new Error('Enter & save your Groq API key first.');
+      if (routed === 'elevenlabs' && !key) throw new Error('Enter & save your ElevenLabs key first.');
+
+      status = 'Preparing audio…';
+      const input = await transcriptionPath();
       const durHint = await transcriptionDuration();
       const cacheKey = makeAsrCacheKey({
-        name: mediaFile.name || 'media',
-        size: mediaFile.size || 0,
+        name: studio.file?.name || input,
+        size: studio.file?.size || 0,
         dur: studio.dur || studio.audioDuration || durHint || 0,
-        engine: activeEng,
-        model: activeModel,
+        engine: routed,
+        model,
         lang,
         prompt: hints,
       });
@@ -115,21 +137,24 @@
       let out = getCachedAsr(cacheKey);
       let fromCache = !!out;
       if (!out) {
-        out = await transcribeMediaWeb({
-          file: mediaFile,
-          engine: activeEng,
+        const resRaw = await T.core.invoke('transcribe', {
+          input,
           lang,
-          model: activeModel,
-          maxWords: studio.subCfg.maxWords || 12,
+          maxlen: studio.subCfg.maxChars,
+          maxWords: studio.subCfg.maxWords,
+          translate: false,
+          model,
+          prompt: hints.trim(),
+          ctx: false,
+          det: false,
+          engine: routed,
+          durationHint: durHint,
           diarize: elDiarize,
           tagAudioEvents: elTags,
-          prompt: hints.trim(),
-          userKey,
-          onProgress: (p, msg) => {
-            pct = p;
-            status = msg;
-          },
+          elevenlabsKey: routed === 'elevenlabs' ? key || null : null,
+          groqKey: routed === 'groq' ? key || null : null,
         });
+        out = JSON.parse(resRaw);
         if (out?.segments?.length) setCachedAsr(cacheKey, out);
       }
 
@@ -175,7 +200,7 @@
         processedSubs,
         studio.subCfg.padBeforeMs,
         studio.subCfg.padAfterMs,
-        studio.dur || studio.audioDuration || out.duration || durHint || 0
+        studio.dur || studio.audioDuration || durHint || 0
       );
       studio.compareFlags = pipelineResult.compareFlags || [];
       studio.quranFlags = pipelineResult.quranFlags || [];
@@ -207,9 +232,9 @@
   async function quickTranslate() {
     if (!studio.subs.length) return studio.toast('Generate subtitles first.');
     const key = studio.TR.key || (studio.API.prov === studio.TR.prov ? studio.API.key : '');
-    if (!key && !studio.hasAiAccess(studio.TR.prov)) {
-      studio.apiModalOpen = true;
-      return;
+    if (!key && studio.TR.prov !== 'ollama') {
+      studio.nav = 'tr';
+      return studio.toast('Add your AI key in Translation settings.');
     }
     trBusy = true;
     trPct = 0;
@@ -276,151 +301,131 @@
 </div>
 
 {#if studio.subTab === 'gen'}
-  <CategoryBlock title="Generate Subtitles" icon="subtitles" open={true}>
-    <div class="sg" style="margin-bottom:8px">
-      <label>
-        Provider
-        <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
-          <option value="groq">Groq</option>
-          <option value="elevenlabs">ElevenLabs</option>
-          <option value="openai">OpenAI</option>
-        </select>
-      </label>
-      <label>
-        Model
-        {#if eng === 'groq'}
-          <select bind:value={groqModel} onchange={() => { try { localStorage.icsGroqAsrModel = groqModel; } catch {} }}>
-            <option value="whisper-large-v3">Whisper Large V3</option>
-            <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo</option>
-          </select>
-        {:else if eng === 'elevenlabs'}
-          <select bind:value={elModel} onchange={() => { try { localStorage.icsElModel = elModel; } catch {} }}>
-            <option value="scribe_v2">Scribe v2</option>
-            <option value="scribe_v1">Scribe v1</option>
-          </select>
-        {:else}
-          <select bind:value={whisperModel}>
-            <option value="whisper-1">Whisper-1</option>
-          </select>
+  <CategoryBlock title="4-Step Intelligent Transcription Assistant" icon="sparkles" open={true}>
+    <div class="transcribe-steps">
+      <!-- Step 1: Audio & Content Language -->
+      <div class="transcribe-step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <div class="step-title">Audio &amp; Content Language</div>
+          <div class="sg">
+            <label>
+              Language
+              <select bind:value={lang}>
+                <option value="ur">Urdu (اردو)</option>
+                <option value="ar">Arabic (العربية)</option>
+                <option value="en">English</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="auto">Auto-detect</option>
+              </select>
+            </label>
+            <label>
+              Content Genre
+              <select bind:value={genre}>
+                <option value="speech">Speech / Lecture</option>
+                <option value="religious">Qur'an &amp; Hadith</option>
+                <option value="poetry">Poem / Nasheed</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: AI Engine & Model -->
+      <div class="transcribe-step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <div class="step-title">AI Engine &amp; Speech Model</div>
+          <div class="sg" style="margin-bottom:6px">
+            <label>
+              Provider
+              <select value={eng} onchange={(e) => setEngine(e.currentTarget.value)}>
+                <option value="groq">Groq (Whisper Large V3)</option>
+                <option value="elevenlabs">ElevenLabs Scribe</option>
+                <option value="faster">Local Whisper (faster-whisper)</option>
+                <option value="cohere">Cohere Transcribe</option>
+                <option value="cpp">whisper.cpp</option>
+              </select>
+            </label>
+            <label>
+              Model
+              {#if eng === 'groq'}
+                <select bind:value={groqModel} onchange={() => { try { localStorage.icsGroqAsrModel = groqModel; } catch {} }}>
+                  <option value="whisper-large-v3">Whisper Large V3</option>
+                  <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo</option>
+                </select>
+              {:else if eng === 'elevenlabs'}
+                <select bind:value={elModel} onchange={() => { try { localStorage.icsElModel = elModel; } catch {} }}>
+                  <option value="scribe_v2">Scribe v2</option>
+                  <option value="scribe_v1">Scribe v1</option>
+                </select>
+              {:else}
+                <select bind:value={whisperModel}>
+                  <option value="auto">Auto (large-v3)</option>
+                  <option value="large-v3">large-v3</option>
+                  <option value="medium">medium</option>
+                  <option value="small">small</option>
+                </select>
+              {/if}
+            </label>
+          </div>
+
+          {#if eng === 'groq' && !groqKey}
+            <div class="sub-card" style="margin-top:6px">
+              <div class="rt">
+                <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
+                <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+              </div>
+              {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+            </div>
+          {:else if eng === 'elevenlabs' && !elKey}
+            <div class="sub-card" style="margin-top:6px">
+              <div class="rt">
+                <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
+                <button type="button" class="xs pri" onclick={saveAsrKeys}>Save</button>
+              </div>
+              {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Step 3: Semantic Segmentation 2.0 -->
+      <div class="transcribe-step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <div class="step-title">Intelligent Semantic Segmentation 2.0</div>
+          <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
+            <label>Max words<input type="number" min="3" max="30" bind:value={studio.subCfg.maxWords} /></label>
+            <label>Pad before ms<input type="number" min="0" max="1500" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
+            <label>Pad after ms<input type="number" min="0" max="1500" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Transcribe & Progress -->
+      <div class="transcribe-step">
+        <button type="button" class="pri" style="width:100%;height:38px;font-size:12.8px" disabled={busy} onclick={generateSubs}>
+          <Icon name="sparkles" size={15} />
+          <span>{busy ? 'Transcribing & Aligning…' : 'Generate Intelligent Subtitles'}</span>
+        </button>
+        {#if busy || pct > 0}
+          <div class="pbar" style="margin:8px 0 4px"><i style="width:{pct}%"></i></div>
         {/if}
-      </label>
-    </div>
-
-    {#if eng === 'groq' && !groqKey && !studio.serverHealth?.providers?.groq}
-      <div class="sub-card" style="margin-bottom:8px">
-        <div class="rt">
-          <input type="password" bind:value={groqKey} placeholder="Groq API Key (gsk_…)" style="flex:1;min-width:0" />
-          <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-        </div>
-        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
+        {#if status}<div class="hint" style="margin:3px 0 0">{status}</div>{/if}
       </div>
-    {:else if eng === 'elevenlabs' && !elKey && !studio.serverHealth?.providers?.elevenlabs}
-      <div class="sub-card" style="margin-bottom:8px">
-        <div class="rt">
-          <input type="password" bind:value={elKey} placeholder="ElevenLabs xi-api-key" style="flex:1;min-width:0" />
-          <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-        </div>
-        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-      </div>
-    {:else if eng === 'openai' && !oaAsrKey && !studio.serverHealth?.providers?.openai}
-      <div class="sub-card" style="margin-bottom:8px">
-        <div class="rt">
-          <input type="password" bind:value={oaAsrKey} placeholder="OpenAI sk-... key" style="flex:1;min-width:0" />
-          <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-        </div>
-        {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-      </div>
-    {/if}
-
-    <div class="sg">
-      <label>
-        Language
-        <select bind:value={lang}>
-          <option value="ur">Urdu</option>
-          <option value="ar">Arabic</option>
-          <option value="en">English</option>
-          <option value="hi">Hindi</option>
-          <option value="auto">Auto-detect</option>
-        </select>
-      </label>
-      <label>
-        Content Style
-        <select bind:value={genre}>
-          <option value="speech">Speech / Lecture</option>
-          <option value="poetry">Poem / Qasida</option>
-          <option value="religious">Religious / Hadith</option>
-        </select>
-      </label>
     </div>
-
-    <div class="bar" style="margin-top:10px;margin-bottom:2px">
-      <button type="button" class="pri" style="flex:1" disabled={busy} onclick={generateSubs}>
-        {busy ? 'Transcribing…' : 'Generate Subtitles'}
-      </button>
-    </div>
-    <div class="pbar"><i style="width:{pct}%"></i></div>
-    {#if status}<div class="hint" style="margin:2px 0 0">{status}</div>{/if}
 
     <button type="button" class="adv-toggle" aria-expanded={showAdvAsr} onclick={() => (showAdvAsr = !showAdvAsr)}>
-      <span>Advanced Transcription &amp; Segmentation</span>
+      <span>Vocabulary Hints &amp; Keyterms</span>
       <Icon name={showAdvAsr ? 'chev-up' : 'chev-down'} size={13} />
     </button>
 
     {#if showAdvAsr}
       <div class="adv-box">
-        {#if eng === 'groq'}
-          <div class="sub-card" style="margin-bottom:8px">
-            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
-              <span class="hint" style="margin:0">Groq Whisper Large V3 (Word Timestamps)</span>
-              <span class="badge" class:ok={studio.serverHealth?.providers?.groq}>
-                {studio.serverHealth?.providers?.groq ? 'Server Key Active' : 'BYOK'}
-              </span>
-            </div>
-            <div class="rt">
-              <input type="password" bind:value={groqKey} placeholder={studio.serverHealth?.providers?.groq ? 'Optional BYOK override…' : 'Groq API Key (gsk_…)'} style="flex:1;min-width:0" />
-              <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-            </div>
-            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-          </div>
-        {:else if eng === 'elevenlabs'}
-          <div class="sub-card" style="margin-bottom:8px">
-            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
-              <span class="hint" style="margin:0">Word timestamps &amp; diarization</span>
-              <span class="badge" class:ok={studio.serverHealth?.providers?.elevenlabs}>
-                {studio.serverHealth?.providers?.elevenlabs ? 'Server Key Active' : 'BYOK'}
-              </span>
-            </div>
-            <div class="rt">
-              <input type="password" bind:value={elKey} placeholder={studio.serverHealth?.providers?.elevenlabs ? 'Optional BYOK override…' : 'ElevenLabs xi-api-key'} style="flex:1;min-width:0" />
-              <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-            </div>
-            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-          </div>
-        {:else}
-          <div class="sub-card" style="margin-bottom:8px">
-            <div class="rt" style="justify-content:space-between;margin-bottom:6px">
-              <span class="hint" style="margin:0">OpenAI Cloud Whisper</span>
-              <span class="badge" class:ok={studio.serverHealth?.providers?.openai}>
-                {studio.serverHealth?.providers?.openai ? 'Server Key Active' : 'BYOK'}
-              </span>
-            </div>
-            <div class="rt">
-              <input type="password" bind:value={oaAsrKey} placeholder={studio.serverHealth?.providers?.openai ? 'Optional OpenAI key override…' : 'OpenAI sk-... key'} style="flex:1;min-width:0" />
-              <button type="button" class="xs pri" onclick={saveElKey}>Save</button>
-            </div>
-            {#if elStatus}<div class="hint" style="margin:4px 0 0">{elStatus}</div>{/if}
-          </div>
-        {/if}
-
-        <input bind:value={hints} placeholder="Keyterms hint (names, Arabic terms…)" style="width:100%;margin-bottom:8px" />
-
-        <div class="sg" style="grid-template-columns:1fr 1fr 1fr">
-          <label>Max words<input type="number" min="0" max="40" bind:value={studio.subCfg.maxWords} /></label>
-          <label>Pad before ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padBeforeMs} /></label>
-          <label>Pad after ms<input type="number" min="0" max="2000" step="50" bind:value={studio.subCfg.padAfterMs} /></label>
-        </div>
-        <button type="button" class="xs" style="width:100%;margin-top:6px" onclick={() => studio.rewrapAndPad()}>
-          Re-wrap Existing Subtitles
+        <input bind:value={hints} placeholder="Keyterms hint (speaker names, Arabic terms, Surah names…)" style="width:100%;margin-bottom:8px" />
+        <button type="button" class="xs" style="width:100%" onclick={() => studio.rewrapAndPad()}>
+          Re-wrap Existing Subtitles with Semantic Segmentation 2.0
         </button>
       </div>
     {/if}
@@ -445,7 +450,7 @@
       disabled={busy || !studio.subs.length}
       onclick={async () => {
         const cfg = studio.TR.key ? studio.TR : studio.API;
-        if (!studio.hasAiAccess(cfg.prov)) return (studio.apiModalOpen = true);
+        if (!cfg.key) return (studio.apiModalOpen = true);
         busy = true;
         try {
           const g = await aiSemanticRearrange(studio.subs, cfg, studio.subCfg);
@@ -468,7 +473,7 @@
       disabled={busy || !studio.subs.length}
       onclick={async () => {
         const cfg = studio.TR.key ? studio.TR : studio.API;
-        if (!studio.hasAiAccess(cfg.prov)) return (studio.apiModalOpen = true);
+        if (!cfg.key) return (studio.apiModalOpen = true);
         busy = true;
         try {
           fixes = await aiProofreadAsr(studio.subs, cfg);
@@ -599,15 +604,59 @@
 {/if}
 
 <style>
+  .transcribe-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .transcribe-step {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .transcribe-step:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+    display: block;
+  }
+  .step-badge {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .step-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
   .cue-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 8px;
+    border-radius: var(--radius-md);
+    padding: 8px 10px;
     margin-bottom: 7px;
+    transition: border-color var(--dur-fast) ease;
+  }
+  .cue-card:hover {
+    border-color: var(--border-mid);
   }
   .cue-card.act {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 1px var(--accent-primary-soft);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-soft);
   }
 </style>
