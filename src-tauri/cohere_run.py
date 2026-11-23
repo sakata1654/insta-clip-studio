@@ -174,8 +174,26 @@ def main():
         pct = min(99, int((i + len(part)) / len(segs) * 100))
         log(f'progress = {pct}%')
         log(f"COHERE_METRICS completed_segments={min(i + len(part), len(segs))}/{len(segs)} batch_seconds={time.perf_counter()-t0:.1f}s inference_elapsed={time.perf_counter()-inference_started:.1f}s")
+
+    all_words = []
+    for seg in out:
+        seg_words = seg['t'].split()
+        if seg_words:
+            dur = max(0.1, seg['e'] - seg['s'])
+            w_dur = dur / len(seg_words)
+            for idx, w in enumerate(seg_words):
+                all_words.append({
+                    "word": w,
+                    "start": float(round(seg['s'] + idx * w_dur, 2)),
+                    "end": float(round(seg['s'] + (idx + 1) * w_dur, 2))
+                })
+    payload = {
+        "segments": out,
+        "words": all_words,
+        "engine": "cohere"
+    }
     with open(a['out'], 'w', encoding='utf-8') as f:
-        json.dump(out, f, ensure_ascii=False)
+        json.dump(payload, f, ensure_ascii=False)
     log(f"COHERE_TIMING total={time.perf_counter()-started:.1f}s inference={inference_seconds:.1f}s segments={len(segs)} output={len(out)}")
     log('DONE')
 

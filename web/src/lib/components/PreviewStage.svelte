@@ -102,12 +102,35 @@
     ro.observe(stageEl);
 
     let raf = 0;
+    let lastPausedFlagCueId = null;
     const tick = () => {
       const V = studio.V;
       const A = studio.A;
       const ph = studio.currentPlayhead();
       studio.playhead = ph;
       studio.playing = !!((V && !V.paused) || (A && !A.paused));
+
+      // Pause at Flags mode (PIPELINE_GUIDE.md Section R3)
+      if (studio.pauseAtFlags && studio.playing) {
+        const flagCue = studio.subs.find((s) => ph >= s.s && ph <= s.e);
+        if (flagCue && flagCue.id !== lastPausedFlagCueId) {
+          const hasFlag =
+            (studio.compareFlags && studio.compareFlags.some((f) => f.cueId === flagCue.id && !f.resolved)) ||
+            (studio.quranFlags && studio.quranFlags.some((f) => f.cueId === flagCue.id && !f.reviewed)) ||
+            (studio.checkItems && studio.checkItems.some((c) => c.cueId === flagCue.id));
+          if (hasFlag) {
+            lastPausedFlagCueId = flagCue.id;
+            if (V) V.pause();
+            if (A) A.pause();
+            studio.playing = false;
+            studio.sel = { type: 'sub', id: flagCue.id };
+            studio.toast(`Paused at review flag for Subtitle #${flagCue.id}`);
+          }
+        }
+      }
+      if (lastPausedFlagCueId && (!studio.playing || !studio.subs.some((s) => s.id === lastPausedFlagCueId && ph >= s.s && ph <= s.e))) {
+        lastPausedFlagCueId = null;
+      }
       if (!studio.exporting && V?.src && !V.paused && studio.trimE > 0 && V.currentTime >= studio.trimE) {
         if (studio.loopRange) {
           studio.seek(studio.trimS);

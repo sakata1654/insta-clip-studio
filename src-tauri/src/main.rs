@@ -1006,8 +1006,9 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
             }
             let mw = max_words.unwrap_or(12) as usize;
             let segs = groq_words_to_segments(&all_words, &fallback_texts.join(" "), mw);
+            let words_json: Vec<Value> = all_words.iter().map(|(s, e, w)| json!({ "start": s, "end": e, "word": w })).collect();
             let _ = app.emit("whisper-log", "progress = 100%");
-            return Ok(json!({ "segments": segs, "engine": "groq", "model": model_id, "language_code": detected_lang, "failed_chunks": failed_chunks }).to_string());
+            return Ok(json!({ "segments": segs, "words": words_json, "engine": "groq", "model": model_id, "language_code": detected_lang, "failed_chunks": failed_chunks }).to_string());
         }
 
         if engine == "elevenlabs" {
@@ -1133,6 +1134,9 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
                 return Err(format!("Cohere Transcribe failed ({st}).\n{likely_cause}\n\nDiagnostic output (latest lines):\n{}", if detail.trim().is_empty() { "No Python output was captured. Reinstall the Cohere runtime and retry." } else { &detail }));
             }
             let segs: Value = serde_json::from_str(&std::fs::read_to_string(&outj).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            if segs.is_object() {
+                return Ok(segs.to_string());
+            }
             return Ok(json!({ "segments": segs, "engine": "cohere" }).to_string());
         }
         let use_faster = match engine.as_str() { "faster" => true, "cpp" => false, _ => model != "large-v3-turbo-q5_0" && py_has("faster_whisper") };
@@ -1149,6 +1153,9 @@ async fn transcribe(app: AppHandle, input: String, lang: String, maxlen: u32, ma
             let _ = std::fs::remove_file(&wav);
             if !st.success() { return Err(format!("faster-whisper failed ({st}) — see Setup")); }
             let segs: Value = serde_json::from_str(&std::fs::read_to_string(&outj).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            if segs.is_object() {
+                return Ok(segs.to_string());
+            }
             return Ok(json!({ "segments": segs }).to_string());
         }
         // whisper.cpp

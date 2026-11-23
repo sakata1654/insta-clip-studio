@@ -13,6 +13,11 @@
     formatGlossaryPrompt,
     validateSubtitleCues,
   } from '../../transcriptEngine/transcriptModel.js';
+  import {
+    generateCompareFlags,
+    generateQuranFlags,
+    generateCheckItems,
+  } from '../../transcriptEngine/reviewSystem.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import Icon from '../Icon.svelte';
 
@@ -22,7 +27,8 @@
   let status = $state('');
   let testStatus = $state('');
   let fetchedModels = $state([]);
-  let activeStudioTab = $state('desk'); // 'transcript' | 'segmentation' | 'desk'
+  let activeStudioTab = $state('desk'); // 'transcript' | 'segmentation' | 'desk' | 'review'
+  let reviewFilter = $state('all'); // 'all' | 'compare' | 'quran' | 'checks'
 
   const cueValidationIssues = $derived(validateSubtitleCues(studio.subs));
   const cueIssuesMap = $derived.by(() => {
@@ -440,6 +446,15 @@
         <Icon name="languages" size={13} />
         <span>3. Translation Desk ({studio.subs.filter((s) => !!s.tr).length}/{studio.subs.length})</span>
       </button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={activeStudioTab === 'review'}
+        onclick={() => (activeStudioTab = 'review')}
+      >
+        <Icon name="check-circle" size={13} />
+        <span>4. Review Desk ({studio.compareFlags.length + studio.quranFlags.length + studio.checkItems.length} flags)</span>
+      </button>
     </div>
 
     {#if activeStudioTab === 'transcript'}
@@ -594,7 +609,7 @@
         {/each}
       </div>
 
-    {:else}
+    {:else if activeStudioTab === 'desk'}
       <!-- TAB 3: TRANSLATION DESK -->
     <div class="tr-toolbar">
       <button type="button" class="pri" disabled={busy} onclick={() => runTranslate()}>Translate</button>
@@ -735,6 +750,189 @@
         <div class="hint">Generate or import subtitles first, then translate cleanly here.</div>
       {/each}
     </div>
+
+    {:else if activeStudioTab === 'review'}
+      <!-- TAB 4: REVIEW DESK -->
+      <div class="tr-toolbar">
+        <div class="rt" style="gap:8px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" bind:checked={studio.pauseAtFlags} />
+            <span style="font-weight:600">Pause at Flags during playback</span>
+          </label>
+          <span style="width:1px;height:18px;background:var(--border-color);margin:0 4px"></span>
+          <button
+            type="button"
+            class="tab-btn sm"
+            class:active={reviewFilter === 'all'}
+            onclick={() => (reviewFilter = 'all')}
+          >
+            All ({studio.compareFlags.length + studio.quranFlags.length + studio.checkItems.length})
+          </button>
+          <button
+            type="button"
+            class="tab-btn sm"
+            class:active={reviewFilter === 'compare'}
+            onclick={() => (reviewFilter = 'compare')}
+          >
+            Compare ({studio.compareFlags.length})
+          </button>
+          <button
+            type="button"
+            class="tab-btn sm"
+            class:active={reviewFilter === 'quran'}
+            onclick={() => (reviewFilter = 'quran')}
+          >
+            Qur'an ({studio.quranFlags.length})
+          </button>
+          <button
+            type="button"
+            class="tab-btn sm"
+            class:active={reviewFilter === 'checks'}
+            onclick={() => (reviewFilter = 'checks')}
+          >
+            Checks ({studio.checkItems.length})
+          </button>
+        </div>
+        <span style="flex:1"></span>
+        <button
+          type="button"
+          class="sm"
+          onclick={() => {
+            studio.compareFlags = generateCompareFlags(studio.subs, studio.engineTranscripts || {});
+            studio.quranFlags = generateQuranFlags(studio.subs);
+            studio.checkItems = generateCheckItems(studio.subs);
+            studio.toast('Re-evaluated review flags');
+          }}
+        >
+          <Icon name="refresh-cw" size={13} />
+          <span>Re-evaluate Flags</span>
+        </button>
+      </div>
+
+      <div class="tr-list review-list">
+        <!-- 1. Compare Disagreement Cards -->
+        {#if reviewFilter === 'all' || reviewFilter === 'compare'}
+          {#each studio.compareFlags as flag (flag.cueId)}
+            {@const cue = studio.subs.find((s) => s.id === flag.cueId) || studio.subs[flag.index]}
+            <div class="review-card compare-card" class:resolved={flag.resolved}>
+              <div class="review-card-header">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="badge warn">Compare Flag</span>
+                  <span class="mono" style="font-weight:600">Subtitle #{flag.cueId}</span>
+                  <span class="badge mono">{fmt(flag.start)} – {fmt(flag.end)}</span>
+                  <span class="hint">{flag.reason}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <button type="button" class="xs" onclick={() => { studio.seek(flag.start); studio.setView('ed'); }}>
+                    ⏵ Seek
+                  </button>
+                  <button
+                    type="button"
+                    class="xs"
+                    class:pri={!flag.resolved}
+                    onclick={() => { flag.resolved = !flag.resolved; studio.inv(); }}
+                  >
+                    {flag.resolved ? '✓ Resolved' : 'Mark Resolved'}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Engine comparison grid -->
+              <div class="engine-compare-grid">
+                <div class="engine-cell">
+                  <div class="engine-cell-title">Primary (Cohere / Voted)</div>
+                  <div class="engine-cell-text" dir="rtl">{flag.versions.primary}</div>
+                </div>
+                <div class="engine-cell">
+                  <div class="engine-cell-title">Whisper Large V3</div>
+                  <div class="engine-cell-text" dir="rtl">{flag.versions.whisper}</div>
+                  {#if cue}
+                    <button
+                      type="button"
+                      class="xs"
+                      style="margin-top:6px"
+                      onclick={() => {
+                        cue.t = flag.versions.whisper;
+                        cue.orig = flag.versions.whisper;
+                        flag.resolved = true;
+                        studio.inv();
+                        studio.snap();
+                        studio.toast('Applied Whisper wording');
+                      }}
+                    >
+                      Use Whisper Text
+                    </button>
+                  {/if}
+                </div>
+                <div class="engine-cell">
+                  <div class="engine-cell-title">Qwen / Fallback</div>
+                  <div class="engine-cell-text" dir="rtl">{flag.versions.qwen}</div>
+                </div>
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        <!-- 2. Qur'an Cards -->
+        {#if reviewFilter === 'all' || reviewFilter === 'quran'}
+          {#each studio.quranFlags as qf (qf.cueId)}
+            <div class="review-card quran-card">
+              <div class="review-card-header">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="badge ok">Qur'an Ayah</span>
+                  <span class="mono" style="font-weight:600">Surah {qf.surah}, Ayah {qf.ayah}</span>
+                  <span class="badge mono">{fmt(qf.start)} – {fmt(qf.end)}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <button type="button" class="xs" onclick={() => { studio.seek(qf.start); studio.setView('ed'); }}>
+                    ⏵ Seek
+                  </button>
+                  <button
+                    type="button"
+                    class="xs"
+                    class:ok={qf.reviewed}
+                    onclick={() => { qf.reviewed = !qf.reviewed; studio.inv(); }}
+                  >
+                    {qf.reviewed ? '✓ Verified' : 'Mark Verified'}
+                  </button>
+                </div>
+              </div>
+              <div class="quran-card-body">
+                <div class="quran-uthmani" dir="rtl">{qf.uthmani}</div>
+                <div class="quran-hilali">{qf.hilaliKhan}</div>
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        <!-- 3. Mechanical Check Items -->
+        {#if reviewFilter === 'all' || reviewFilter === 'checks'}
+          {#each studio.checkItems as check, idx (idx)}
+            <div class="review-card check-card">
+              <div class="review-card-header">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="badge warn">{check.type}</span>
+                  {#if check.cueId !== null}
+                    <span class="mono" style="font-weight:600">Cue #{check.cueId}</span>
+                  {/if}
+                  <span>{check.message}</span>
+                </div>
+                {#if check.start !== undefined}
+                  <button type="button" class="xs" onclick={() => { studio.seek(check.start); studio.setView('ed'); }}>
+                    ⏵ Seek {fmt(check.start)}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        {#if !studio.compareFlags.length && !studio.quranFlags.length && !studio.checkItems.length}
+          <div class="hint" style="text-align:center;padding:36px">
+            ✓ No review flags detected! All transcription engines, Qur'an verses, and style checks passed with high confidence.
+          </div>
+        {/if}
+      </div>
     {/if}
   </section>
 </div>
@@ -887,6 +1085,69 @@
     padding: 2px 6px;
     border-radius: 10px;
     font-size: 10.5px;
+  }
+  .review-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .review-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px 14px;
+    transition: all 0.15s ease;
+  }
+  .review-card.resolved {
+    opacity: 0.65;
+    border-color: rgba(35, 134, 54, 0.4);
+  }
+  .review-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .engine-compare-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .engine-cell {
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .engine-cell-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .engine-cell-text {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .quran-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .quran-uthmani {
+    font-size: 16px;
+    line-height: 1.7;
+    font-family: 'Amiri', 'Traditional Arabic', serif;
+    color: var(--accent-emerald, #3fb950);
+  }
+  .quran-hilali {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--text-primary);
   }
   @media (max-width: 920px) {
     .tr-page {

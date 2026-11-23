@@ -15,6 +15,7 @@
   import { fvtt, fts, studio } from '../../state.svelte.js';
   import { shapeBidiText } from '../../bidiHelper.js';
   import { DEFAULT_ISLAMIC_GLOSSARY, formatGlossaryPrompt, validateSubtitleCues } from '../../transcriptEngine/transcriptModel.js';
+  import { TranscriptionPipeline } from '../../transcriptEngine/transcriptionEngine.js';
   import { transcribeMediaWeb } from '../../webPlatform/webAiClient.js';
   import CategoryBlock from '../CategoryBlock.svelte';
   import Icon from '../Icon.svelte';
@@ -134,18 +135,55 @@
 
       const mc = studio.subCfg.maxChars || 84;
       const mw = studio.subCfg.maxWords || 12;
-      const md = studio.subCfg.maxDur || 8;
-      const rawSubs = segsToSubs(out.segments || [], mc, mw, md, () => studio.nextId());
-      const segSubs = applyGenreSegmentation(rawSubs.sort((a, b) => a.s - b.s), genre, { maxChars: mc, maxWords: mw, maxDur: md });
+      const md = studio.subCfg.maxDur || 14;
+
+      const pipeline = new TranscriptionPipeline({
+        maxChars: mc,
+        maxWords: mw,
+        maxDur: md,
+        minDur: 1.6,
+        targetReadingSpeedCPS: 15.0,
+        doQuranSnapping: true,
+        doDeterministicCleanups: true,
+        doEnglishPolish: true,
+      });
+
+      const pipelineResult = await pipeline.process({
+        engine: routed,
+        language: lang,
+        transcribeFn: async () => out,
+        onProgress: (stageIdx, stageName, stagePct, msg) => {
+          pct = stagePct;
+          status = msg;
+        },
+      });
+
+      const processedSubs = pipelineResult.cues.map((c) => ({
+        id: studio.nextId(),
+        s: c.s,
+        e: c.e,
+        t: c.text || c.ar || '',
+        orig: c.orig || c.ar || c.text || '',
+        tr: c.translation || c.en || '',
+        isQuran: !!c.isQuran,
+        quranRef: c.quranRef || null,
+        pos: 'bottom',
+        color: '#FFFFFF',
+      }));
+
       studio.subs = applySubtitlePadding(
-        segSubs,
+        processedSubs,
         studio.subCfg.padBeforeMs,
         studio.subCfg.padAfterMs,
         studio.dur || studio.audioDuration || out.duration || durHint || 0
       );
+      studio.compareFlags = pipelineResult.compareFlags || [];
+      studio.quranFlags = pipelineResult.quranFlags || [];
+      studio.checkItems = pipelineResult.checkItems || [];
+
       studio.expandPipeSubtitles(false);
       pct = 100;
-      status = `${studio.subs.length} cues ready${fromCache ? ' (cached)' : ''} (target ${mw}w · ±${studio.subCfg.padBeforeMs}ms)`;
+      status = `${studio.subs.length} cues ready (${pipelineResult.compareFlags.length} flags for review)${fromCache ? ' (cached)' : ''}`;
       studio.inv();
       studio.snap();
       studio.subTab = 'edit';

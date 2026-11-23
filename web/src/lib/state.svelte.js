@@ -175,6 +175,10 @@ class StudioStore {
   file = $state(null);
   meta = $state({});
   subs = $state([]);
+  compareFlags = $state([]);
+  quranFlags = $state([]);
+  checkItems = $state([]);
+  pauseAtFlags = $state(false);
   texts = $state([]);
   mediaOverlays = $state([]);
   sel = $state(null);
